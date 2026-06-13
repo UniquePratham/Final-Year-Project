@@ -639,8 +639,43 @@ export default function App() {
     
     setFetchingModels(true);
     setFetchError("");
-    addConsoleLog(`Fetching models from ${provider} endpoint: ${baseUrl}...`, 'info');
     
+    const isBaseUrlLocal = baseUrl.includes("localhost") || baseUrl.includes("127.0.0.1") || baseUrl.includes("::1");
+    const isOrchestratorLocal = apiUrl && (apiUrl.includes("localhost") || apiUrl.includes("127.0.0.1") || apiUrl.includes("::1"));
+    const canProxy = apiUrl && (!isBaseUrlLocal || isOrchestratorLocal);
+    
+    // 1. Try fetching via Orchestrator (avoids browser CORS issues for cloud providers)
+    if (canProxy) {
+      addConsoleLog(`Requesting model list for ${provider} via Orchestrator: ${apiUrl}...`, 'info');
+      try {
+        const cleanApiUrl = apiUrl.replace(/\/+$/, "");
+        const response = await fetch(`${cleanApiUrl}/list-models`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            provider,
+            api_key: apiKeys[provider] || null,
+            api_base_url: baseUrl || null
+          })
+        });
+        
+        if (response.ok) {
+          const data = await response.json();
+          if (data && Array.isArray(data.models) && data.models.length > 0) {
+            setFetchedModels(prev => ({ ...prev, [provider]: data.models }));
+            setModel(data.models[0]);
+            addConsoleLog(`Successfully loaded ${data.models.length} models for ${provider} via Orchestrator.`, 'success');
+            setFetchingModels(false);
+            return;
+          }
+        }
+      } catch (err) {
+        console.warn("Orchestrator list-models failed, falling back to direct fetch:", err);
+      }
+    }
+    
+    // 2. Direct Browser Fetch Fallback (for localhost or if orchestrator request fails)
+    addConsoleLog(`Attempting direct browser fetch from ${provider} endpoint: ${baseUrl}...`, 'info');
     let modelsFound = [];
     
     if (provider === "gemini") {

@@ -548,6 +548,108 @@ def get_live_logs():
     # Return 3 random log entries joined by newlines
     return "\n".join(random.sample(messages, 3))
 
+class ModelListRequest(BaseModel):
+    provider: str
+    api_key: Optional[str] = None
+    api_base_url: Optional[str] = None
+
+@app.post("/list-models")
+async def list_models(request: ModelListRequest):
+    provider = request.provider.lower()
+    api_key = request.api_key
+    base_url = request.api_base_url
+    
+    # Establish defaults
+    if not base_url:
+        if provider == "openai":
+            base_url = "https://api.openai.com/v1"
+        elif provider == "groq":
+            base_url = "https://api.groq.com/openai/v1"
+        elif provider == "ollama":
+            base_url = "http://localhost:11434/v1"
+        elif provider == "anthropic":
+            base_url = "https://api.anthropic.com/v1"
+        elif provider == "gemini":
+            base_url = "https://generativelanguage.googleapis.com"
+        elif provider == "custom":
+            base_url = "http://localhost:1234/v1"
+            
+    models = []
+    
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            if provider == "gemini":
+                if not api_key:
+                    raise HTTPException(status_code=400, detail="Gemini API Key is required.")
+                url = f"{base_url.rstrip('/')}/v1beta/models?key={api_key}"
+                resp = await client.get(url)
+                resp.raise_for_status()
+                data = resp.json()
+                if "models" in data:
+                    models = [m["name"].replace("models/", "") for m in data["models"]]
+            elif provider == "anthropic":
+                models = [
+                    "claude-3-5-sonnet-20241022",
+                    "claude-3-5-sonnet-20240620",
+                    "claude-3-5-haiku-20241022",
+                    "claude-3-opus-20240229",
+                    "claude-3-sonnet-20240229",
+                    "claude-3-haiku-20240307"
+                ]
+            else:
+                headers = {}
+                if api_key:
+                    headers["Authorization"] = f"Bearer {api_key}"
+                
+                clean_url = base_url.rstrip("/")
+                
+                # Try standard /models
+                try:
+                    resp = await client.get(f"{clean_url}/models", headers=headers)
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        if isinstance(data, dict) and "data" in data:
+                            models = [m["id"] for m in data["data"] if "id" in m]
+                        elif isinstance(data, list):
+                            models = [m.get("id") or m.get("name") if isinstance(m, dict) else m for m in data]
+                except Exception:
+                    pass
+                
+                # Try /model if empty
+                if not models:
+                    try:
+                        resp = await client.get(f"{clean_url}/model", headers=headers)
+                        if resp.status_code == 200:
+                            data = resp.json()
+                            if isinstance(data, list):
+                                models = [m.get("id") or m.get("name") if isinstance(m, dict) else m for m in data]
+                            elif isinstance(data, dict):
+                                if "id" in data:
+                                    models = [data["id"]]
+                                elif "model" in data:
+                                    models = [data["model"]]
+                    except Exception:
+                        pass
+                
+                # Try Ollama specific /api/tags if the above failed
+                if not models:
+                    try:
+                        root_url = clean_url.replace("/v1", "")
+                        resp = await client.get(f"{root_url}/api/tags")
+                        if resp.status_code == 200:
+                            data = resp.json()
+                            if "models" in data:
+                                models = [m["name"] for m in data["models"]]
+                    except Exception:
+                        pass
+                        
+        return {"models": models}
+        
+    except Exception as e:
+        logger.error(f"Error fetching models for {provider}: {e}")
+        raise HTTPException(status_code=502, detail=f"Failed to fetch models: {str(e)}")
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
+
