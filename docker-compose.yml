@@ -15,6 +15,13 @@ services:
       - RESPONSE_SERVICE_URL=http://agent-response:8005
       - DEFAULT_PROVIDER=ollama
       - DEFAULT_MODEL=llama3
+      - AUTH_DB_TYPE=sqlite
+      - POSTGRES_HOST=
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=sentinel_forge_auth
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=
+      - POSTGRES_SSLMODE=prefer
     volumes:
       - ./backend/orchestrator/db:/app/orchestrator/db
     depends_on:
