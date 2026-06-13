@@ -139,6 +139,31 @@ Run the creation command matching your current terminal directory (passing the w
   ollama run sentinel-forge-qwen "Detect brute force login attacks and isolate the offender IP."
   ```
 
+### 3. Fixing Browser CORS Issues for Local Ollama
+Since the Sentinel Forge web portal is hosted on a remote domain (`https://sentinel-forge-gamma.vercel.app`), your web browser will block direct API calls to `http://localhost:11434` due to CORS security policies unless Ollama is configured to allow it.
+
+To resolve this:
+* **On Windows**:
+  1. Quit the Ollama application from your system tray (bottom-right taskbar icon -> Right-click -> Quit).
+  2. Open the Start menu, search for **"Environment Variables"**, and select **Edit the system environment variables**.
+  3. Click **Environment Variables...** at the bottom.
+  4. Under **User variables for <Your-User>**, click **New...**:
+     - **Variable name**: `OLLAMA_ORIGINS`
+     - **Variable value**: `*`
+  5. Click **OK** to save and apply the changes.
+  6. Relaunch the **Ollama** application from your Start Menu.
+
+* **On macOS**:
+  1. Quit the Ollama application.
+  2. Open Terminal and set the environment variable:
+     ```bash
+     launchctl setenv OLLAMA_ORIGINS "*"
+     ```
+  3. Restart the Ollama application.
+
+* **On Linux**:
+  1. Edit the systemd service (see VPS setup below) and add the environment variable `Environment="OLLAMA_ORIGINS=*"` to the service block.
+
 ---
 
 ## Part 5: Uploading Model to Ollama Registry
@@ -180,17 +205,18 @@ ssh root@<your-vps-ip>
 curl -fsSL https://ollama.com/install.sh | sh
 ```
 
-### Step 2: Configure Ollama for Remote Access
-By default, Ollama only listens on `127.0.0.1:11434`. To allow your React frontend or Python orchestrator to connect to the VPS, we must bind it to `0.0.0.0`:
+### Step 2: Configure Ollama for Remote Access & CORS
+By default, Ollama only listens on `127.0.0.1:11434`. To allow your React frontend or Python orchestrator to connect to the VPS, we must bind it to `0.0.0.0` and configure CORS origins:
 
 1. Open the systemd override editor for the Ollama service:
    ```bash
    sudo systemctl edit ollama.service
    ```
-2. This opens a text editor. Insert the following lines at the top of the file (between the comments or at the very top):
+2. This opens a text editor. Insert the following lines at the top of the file:
    ```ini
    [Service]
    Environment="OLLAMA_HOST=0.0.0.0"
+   Environment="OLLAMA_ORIGINS=*"
    ```
 3. Save and close the editor (for `nano`, press `Ctrl+O`, `Enter`, then `Ctrl+X`).
 4. Reload the systemd daemon and restart the Ollama service:
@@ -211,7 +237,44 @@ sudo ufw allow 11434/tcp
 sudo ufw reload
 ```
 
-### Step 4: Pull Your Custom Model on the VPS
+### Step 4: Resolving HTTPS / Mixed-Content Blocks
+Since your frontend is hosted on HTTPS (`https://sentinel-forge-gamma.vercel.app`), browsers will block direct API calls to your VPS over `http://<your-vps-ip>:11434` due to **Mixed Content Security Policies**.
+
+You can handle this in two ways:
+
+#### Option A: Use the Orchestrator Backend Proxy (Recommended)
+You do not need to expose your VPS over HTTPS. The Sentinel Forge architecture handles this:
+1. When you trigger "Start Analysis", the frontend contacts the **Central API Host** (`https://guns-cloudy-road...` over HTTPS).
+2. The orchestrator makes a secure server-to-server request over HTTP to your VPS. The browser never talks to your VPS directly, avoiding CORS and Mixed Content blocks.
+3. For the **Load Models from Endpoint** button, the frontend automatically proxies the request through the orchestrator's `/list-models` endpoint.
+
+#### Option B: Set up Nginx with SSL on the VPS
+If you want the browser to call your VPS directly:
+1. Point a domain/subdomain to your VPS (e.g. `ollama.yourdomain.com`).
+2. Install Nginx and obtain a Let's Encrypt SSL certificate:
+   ```bash
+   sudo apt update
+   sudo apt install nginx certbot python3-certbot-nginx -y
+   sudo certbot --nginx -d ollama.yourdomain.com
+   ```
+3. Configure the Nginx server block to proxy traffic to Ollama:
+   ```nginx
+   server {
+       server_name ollama.yourdomain.com;
+
+       location / {
+           proxy_pass http://127.0.0.1:11434;
+           proxy_set_header Host $host;
+           proxy_set_header X-Real-IP $remote_addr;
+           proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+           proxy_set_header X-Forwarded-Proto $scheme;
+       }
+   }
+   ```
+4. Now, you can use `https://ollama.yourdomain.com` as your Custom Endpoint in the web portal safely!
+
+
+### Step 5: Pull Your Custom Model on the VPS
 Since the model is registered on the Ollama servers, you do not need to copy the GGUF. Simply pull it directly on the VPS:
 ```bash
 ollama pull <your-namespace>/sentinel-forge-qwen

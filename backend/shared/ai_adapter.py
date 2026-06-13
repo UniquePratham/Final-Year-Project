@@ -95,8 +95,9 @@ class AIAdapter:
     def _generate_openai_compatible(self, prompt: str, system_instruction: str) -> str:
         headers = {
             "Content-Type": "application/json",
-            "Authorization": f"Bearer {self.api_key}"
         }
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
         messages = []
         if system_instruction:
             messages.append({"role": "system", "content": system_instruction})
@@ -116,8 +117,9 @@ class AIAdapter:
     def _stream_openai_compatible(self, prompt: str, system_instruction: str) -> Generator[str, None, None]:
         headers = {
             "Content-Type": "application/json",
-            "Authorization": f"Bearer {self.api_key}"
         }
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
         messages = []
         if system_instruction:
             messages.append({"role": "system", "content": system_instruction})
