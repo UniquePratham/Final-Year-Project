@@ -509,18 +509,62 @@ export default function App() {
   const [authError, setAuthError] = useState('');
 
   // Config parameters
-  const [prompt, setPrompt] = useState(PROMPT_PRESETS[0]);
+  const [prompt, setPrompt] = useState(() => localStorage.getItem('sentinel_forge_prompt') || PROMPT_PRESETS[0]);
   const [logs, setLogs] = useState(''); // Empty by default - no fake logs!
-  const [logFormat, setLogFormat] = useState("Syslog");
-  const [provider, setProvider] = useState("ollama");
-  const [model, setModel] = useState("llama3");
-  const [customModel, setCustomModel] = useState("");
-  const [apiUrl, setApiUrl] = useState(import.meta.env.VITE_API_URL || "http://localhost:8000");
+  const [logFormat, setLogFormat] = useState(() => localStorage.getItem('sentinel_forge_log_format') || "Syslog");
+  const [provider, setProvider] = useState(() => localStorage.getItem('sentinel_forge_provider') || "ollama");
+  const [model, setModel] = useState(() => localStorage.getItem('sentinel_forge_model') || "llama3");
+  const [customModel, setCustomModel] = useState(() => localStorage.getItem('sentinel_forge_custom_model') || "");
+  const [apiUrl, setApiUrl] = useState(() => localStorage.getItem('sentinel_forge_api_url') || import.meta.env.VITE_API_URL || "http://localhost:8000");
   const [systemMode, setSystemMode] = useState("OFFLINE"); 
-  const [liveLogUrl, setLiveLogUrl] = useState("");
+  const [liveLogUrl, setLiveLogUrl] = useState(() => localStorage.getItem('sentinel_forge_live_log_url') || "");
   const [isPolling, setIsPolling] = useState(false);
   const [dragActive, setDragActive] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+
+  // Custom models fetching states
+  const [fetchedModels, setFetchedModels] = useState(() => {
+    try {
+      const saved = localStorage.getItem('sentinel_forge_fetched_models_map');
+      return saved ? JSON.parse(saved) : {};
+    } catch (e) {
+      return {};
+    }
+  });
+  const [fetchingModels, setFetchingModels] = useState(false);
+  const [fetchError, setFetchError] = useState("");
+
+  useEffect(() => {
+    localStorage.setItem('sentinel_forge_prompt', prompt);
+  }, [prompt]);
+
+  useEffect(() => {
+    localStorage.setItem('sentinel_forge_log_format', logFormat);
+  }, [logFormat]);
+
+  useEffect(() => {
+    localStorage.setItem('sentinel_forge_provider', provider);
+  }, [provider]);
+
+  useEffect(() => {
+    localStorage.setItem('sentinel_forge_model', model);
+  }, [model]);
+
+  useEffect(() => {
+    localStorage.setItem('sentinel_forge_custom_model', customModel);
+  }, [customModel]);
+
+  useEffect(() => {
+    localStorage.setItem('sentinel_forge_api_url', apiUrl);
+  }, [apiUrl]);
+
+  useEffect(() => {
+    localStorage.setItem('sentinel_forge_live_log_url', liveLogUrl);
+  }, [liveLogUrl]);
+
+  useEffect(() => {
+    localStorage.setItem('sentinel_forge_fetched_models_map', JSON.stringify(fetchedModels));
+  }, [fetchedModels]);
 
   const [apiKeys, setApiKeys] = useState(() => {
     try {
@@ -548,15 +592,104 @@ export default function App() {
     localStorage.setItem('sentinel_forge_api_base_urls', JSON.stringify(apiBaseUrls));
   }, [apiBaseUrls]);
 
+  const providerFetchedModels = fetchedModels[provider] || [];
+
+  const modelOptions = React.useMemo(() => {
+    const defaults = PROVIDER_MODELS[provider] || [];
+    if (providerFetchedModels.length > 0) {
+      const fetchedOpts = providerFetchedModels.map(m => ({ value: m, label: m }));
+      const standard = defaults.filter(d => d.value !== 'custom');
+      const combined = [...standard];
+      fetchedOpts.forEach(opt => {
+        if (!combined.some(c => c.value === opt.value)) {
+          combined.push(opt);
+        }
+      });
+      if (defaults.some(d => d.value === 'custom')) {
+        combined.push({ value: "custom", label: "Custom Model..." });
+      }
+      return combined;
+    }
+    return defaults;
+  }, [provider, providerFetchedModels]);
+
   useEffect(() => {
-    const models = PROVIDER_MODELS[provider];
-    if (models && models.length > 0) {
-      const exists = models.some(m => m.value === model);
+    if (modelOptions && modelOptions.length > 0) {
+      const exists = modelOptions.some(m => m.value === model);
       if (!exists) {
-        setModel(models[0].value);
+        setModel(modelOptions[0].value);
       }
     }
-  }, [provider]);
+  }, [provider, modelOptions]);
+
+  const fetchCustomModels = async () => {
+    const baseUrl = apiBaseUrls[provider];
+    if (!baseUrl) {
+      setFetchError("Please configure the Custom Endpoint base URL first.");
+      return;
+    }
+    
+    setFetchingModels(true);
+    setFetchError("");
+    addConsoleLog(`Fetching models from custom endpoint: ${baseUrl}...`, 'info');
+    
+    const headers = {
+      "Content-Type": "application/json"
+    };
+    if (apiKeys[provider]) {
+      headers["Authorization"] = `Bearer ${apiKeys[provider]}`;
+    }
+    
+    let modelsFound = [];
+    
+    const tryFetch = async (url) => {
+      try {
+        const res = await fetch(url, { headers });
+        if (res.ok) {
+          const data = await res.json();
+          if (data && Array.isArray(data.data)) {
+            return data.data.map(m => m.id).filter(Boolean);
+          }
+          if (data && Array.isArray(data.models)) {
+            return data.models.map(m => m.name || m.model).filter(Boolean);
+          }
+          if (Array.isArray(data)) {
+            return data.map(m => typeof m === 'object' ? (m.id || m.name) : m).filter(Boolean);
+          }
+          if (data && typeof data === 'object') {
+            if (data.id) return [data.id];
+            if (data.model) return [data.model];
+          }
+        }
+      } catch (e) {
+        console.warn(`Failed fetch on ${url}:`, e);
+      }
+      return null;
+    };
+    
+    const cleanBaseUrl = baseUrl.replace(/\/$/, "");
+    modelsFound = await tryFetch(`${cleanBaseUrl}/models`);
+    
+    if (!modelsFound || modelsFound.length === 0) {
+      modelsFound = await tryFetch(`${cleanBaseUrl}/model`);
+    }
+    
+    if (!modelsFound || modelsFound.length === 0) {
+      const rootUrl = cleanBaseUrl.replace(/\/v1$/, "");
+      modelsFound = await tryFetch(`${rootUrl}/api/tags`);
+    }
+    
+    if (modelsFound && modelsFound.length > 0) {
+      setFetchedModels(prev => ({ ...prev, [provider]: modelsFound }));
+      setModel(modelsFound[0]);
+      addConsoleLog(`Successfully loaded ${modelsFound.length} models from custom endpoint.`, 'success');
+    } else {
+      setFetchError("Could not retrieve models. Ensure endpoint is active and CORS is enabled.");
+      addConsoleLog("⚠️ Failed to load models from custom endpoint. Check console/network logs.", 'warning');
+    }
+    setFetchingModels(false);
+  };
+
 
   // Active Tab
   const [activeTab, setActiveTab] = useState("DASHBOARD"); // DASHBOARD | SIMULATOR
@@ -1389,7 +1522,7 @@ export default function App() {
                    onChange={e => setModel(e.target.value)}
                    className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-200 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 transition-all cursor-pointer font-sans"
                  >
-                   {(PROVIDER_MODELS[provider] || []).map(m => (
+                   {(modelOptions || []).map(m => (
                      <option key={m.value} value={m.value}>{m.label}</option>
                    ))}
                  </select>
@@ -1463,6 +1596,28 @@ export default function App() {
                 }
                 className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-200 font-mono outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 transition-all"
               />
+              {(provider === 'custom' || provider === 'ollama' || model === 'custom') && (
+                <>
+                  <button
+                    type="button"
+                    onClick={fetchCustomModels}
+                    disabled={fetchingModels}
+                    className="mt-2 w-full flex items-center justify-center space-x-1.5 px-3 py-1.5 bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 border border-blue-500/30 hover:border-blue-500/50 rounded-lg text-[10px] font-semibold transition-all active:scale-[0.98] disabled:opacity-50"
+                  >
+                    {fetchingModels ? (
+                      <>
+                        <Icons.Refresh />
+                        <span>Loading Models...</span>
+                      </>
+                    ) : (
+                      <span>🔌 Load Models from Endpoint</span>
+                    )}
+                  </button>
+                  {fetchError && (
+                    <p className="text-[9px] text-rose-400 mt-1 font-medium">{fetchError}</p>
+                  )}
+                </>
+              )}
             </div>
 
           </div>
