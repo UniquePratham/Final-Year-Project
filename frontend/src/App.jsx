@@ -458,7 +458,6 @@ function getSandboxReportAndPlaybook(scenario, customIp, customUser, logsCount) 
 
   return { status, summary, recommendations, affected_resources, mitigation_actions };
 }
-
 const PROVIDER_MODELS = {
   gemini: [
     { value: "gemini-1.5-flash", label: "Gemini 1.5 Flash" },
@@ -486,6 +485,9 @@ const PROVIDER_MODELS = {
   anthropic: [
     { value: "claude-3-5-sonnet-20240620", label: "Claude 3.5 Sonnet" },
     { value: "claude-3-opus-20240229", label: "Claude 3 Opus" },
+    { value: "custom", label: "Custom Model..." }
+  ],
+  custom: [
     { value: "custom", label: "Custom Model..." }
   ]
 };
@@ -523,9 +525,9 @@ export default function App() {
   const [apiKeys, setApiKeys] = useState(() => {
     try {
       const saved = localStorage.getItem('sentinel_forge_api_keys');
-      return saved ? JSON.parse(saved) : { gemini: '', openai: '', groq: '', anthropic: '' };
+      return saved ? JSON.parse(saved) : { gemini: '', openai: '', groq: '', anthropic: '', custom: '' };
     } catch (e) {
-      return { gemini: '', openai: '', groq: '', anthropic: '' };
+      return { gemini: '', openai: '', groq: '', anthropic: '', custom: '' };
     }
   });
 
@@ -536,9 +538,9 @@ export default function App() {
   const [apiBaseUrls, setApiBaseUrls] = useState(() => {
     try {
       const saved = localStorage.getItem('sentinel_forge_api_base_urls');
-      return saved ? JSON.parse(saved) : { gemini: '', openai: '', groq: '', ollama: '', anthropic: '' };
+      return saved ? JSON.parse(saved) : { gemini: '', openai: '', groq: '', ollama: '', anthropic: '', custom: '' };
     } catch (e) {
-      return { gemini: '', openai: '', groq: '', ollama: '', anthropic: '' };
+      return { gemini: '', openai: '', groq: '', ollama: '', anthropic: '', custom: '' };
     }
   });
 
@@ -1370,6 +1372,7 @@ export default function App() {
                 <option value="groq">Groq Cloud</option>
                 <option value="ollama">Ollama (Local)</option>
                 <option value="anthropic">Anthropic Claude</option>
+                <option value="custom">Custom Provider (OpenAI Compatible)</option>
               </select>
             </div>
 
@@ -1387,14 +1390,14 @@ export default function App() {
                    ))}
                  </select>
                </div>
-               {model === 'custom' && (
+               {(model === 'custom' || provider === 'custom') && (
                  <div>
                    <label className="block text-[10px] font-bold text-slate-400 mb-1.5 uppercase tracking-wider">Custom Model Identifier</label>
                    <input 
                      type="text"
                      value={customModel}
                      onChange={e => setCustomModel(e.target.value)}
-                     placeholder="e.g. llama3.1:latest, gpt-4-32k"
+                     placeholder="e.g. llama3.1:latest, gpt-4-32k, my-custom-model"
                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-xs text-slate-200 outline-none focus:border-blue-500/80 focus:ring-2 focus:ring-blue-500/10 transition-all font-mono"
                    />
                  </div>
@@ -1451,7 +1454,8 @@ export default function App() {
                   provider === "openai" ? "https://api.openai.com/v1" :
                   provider === "groq" ? "https://api.groq.com/openai/v1" :
                   provider === "ollama" ? "http://localhost:11434/v1" :
-                  provider === "anthropic" ? "https://api.anthropic.com/v1" : ""
+                  provider === "anthropic" ? "https://api.anthropic.com/v1" :
+                  provider === "custom" ? "https://api.your-inference-host.com/v1" : ""
                 }
                 className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-200 font-mono outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 transition-all"
               />

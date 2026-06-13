@@ -30,7 +30,7 @@ class AIAdapter:
         try:
             if self.provider == "gemini":
                 return self._generate_gemini(prompt, system_instruction)
-            elif self.provider in ["openai", "groq", "openrouter", "ollama"]:
+            elif self.provider in ["openai", "groq", "openrouter", "ollama", "custom"]:
                 return self._generate_openai_compatible(prompt, system_instruction)
             elif self.provider == "anthropic":
                 return self._generate_anthropic(prompt, system_instruction)
@@ -46,7 +46,7 @@ class AIAdapter:
         try:
             if self.provider == "gemini":
                 yield from self._stream_gemini(prompt, system_instruction)
-            elif self.provider in ["openai", "groq", "openrouter", "ollama"]:
+            elif self.provider in ["openai", "groq", "openrouter", "ollama", "custom"]:
                 yield from self._stream_openai_compatible(prompt, system_instruction)
             elif self.provider == "anthropic":
                 yield from self._stream_anthropic(prompt, system_instruction)
