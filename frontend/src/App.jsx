@@ -580,11 +580,29 @@ export default function App() {
   }, [apiKeys]);
 
   const [apiBaseUrls, setApiBaseUrls] = useState(() => {
+    const defaults = {
+      gemini: 'https://generativelanguage.googleapis.com',
+      openai: 'https://api.openai.com/v1',
+      groq: 'https://api.groq.com/openai/v1',
+      ollama: 'http://localhost:11434/v1',
+      anthropic: 'https://api.anthropic.com/v1',
+      custom: 'http://localhost:1234/v1'
+    };
     try {
       const saved = localStorage.getItem('sentinel_forge_api_base_urls');
-      return saved ? JSON.parse(saved) : { gemini: '', openai: '', groq: '', ollama: '', anthropic: '', custom: '' };
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        const merged = { ...defaults };
+        Object.keys(defaults).forEach(key => {
+          if (parsed[key] !== undefined && parsed[key] !== '') {
+            merged[key] = parsed[key];
+          }
+        });
+        return merged;
+      }
+      return defaults;
     } catch (e) {
-      return { gemini: '', openai: '', groq: '', ollama: '', anthropic: '', custom: '' };
+      return defaults;
     }
   });
 
