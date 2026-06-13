@@ -22,6 +22,7 @@ class ResponseRequest(BaseModel):
     provider: Optional[str] = None
     model: Optional[str] = None
     api_key: Optional[str] = None
+    api_base_url: Optional[str] = None
 
 SYSTEM_INSTRUCTION = """You are the Response & Mitigation Agent for Sentinel Forge: AI Log Analyzer.
 Your task is to analyze the executive log intelligence report and produce a structured list of actionable mitigation steps.
@@ -72,7 +73,7 @@ async def mitigate_incident(request: ResponseRequest):
         )
         
     try:
-        adapter = AIAdapter(provider=provider, model=model, api_key=request.api_key)
+        adapter = AIAdapter(provider=provider, model=model, api_key=request.api_key, base_url=request.api_base_url)
         
         prompt = f"""
         Final Report Status: {request.final_report.status}

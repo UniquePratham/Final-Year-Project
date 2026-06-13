@@ -23,6 +23,7 @@ class ReportRequest(BaseModel):
     provider: Optional[str] = None
     model: Optional[str] = None
     api_key: Optional[str] = None
+    api_base_url: Optional[str] = None
 
 SYSTEM_INSTRUCTION = """You are the Report Agent for Sentinel Forge: AI Log Analyzer.
 Your task is to compile technical log analysis findings into an executive report.
@@ -59,7 +60,7 @@ async def generate_report(request: ReportRequest):
         status = "Warning"
         
     try:
-        adapter = AIAdapter(provider=provider, model=model, api_key=request.api_key)
+        adapter = AIAdapter(provider=provider, model=model, api_key=request.api_key, base_url=request.api_base_url)
         
         prompt = f"""
         User Intent Class: {request.intent.intent_class}

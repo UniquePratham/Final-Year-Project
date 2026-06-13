@@ -462,26 +462,31 @@ function getSandboxReportAndPlaybook(scenario, customIp, customUser, logsCount) 
 const PROVIDER_MODELS = {
   gemini: [
     { value: "gemini-1.5-flash", label: "Gemini 1.5 Flash" },
-    { value: "gemini-1.5-pro", label: "Gemini 1.5 Pro" }
+    { value: "gemini-1.5-pro", label: "Gemini 1.5 Pro" },
+    { value: "custom", label: "Custom Model..." }
   ],
   openai: [
     { value: "gpt-4o", label: "GPT-4o" },
     { value: "gpt-4o-mini", label: "GPT-4o Mini" },
-    { value: "gpt-3.5-turbo", label: "GPT-3.5 Turbo" }
+    { value: "gpt-3.5-turbo", label: "GPT-3.5 Turbo" },
+    { value: "custom", label: "Custom Model..." }
   ],
   groq: [
     { value: "llama3-8b-8192", label: "Llama 3 8B (Groq)" },
     { value: "llama3-70b-8192", label: "Llama 3 70B (Groq)" },
-    { value: "mixtral-8x7b-32768", label: "Mixtral 8x7b (Groq)" }
+    { value: "mixtral-8x7b-32768", label: "Mixtral 8x7b (Groq)" },
+    { value: "custom", label: "Custom Model..." }
   ],
   ollama: [
     { value: "llama3", label: "Llama 3 (Ollama)" },
     { value: "mistral", label: "Mistral (Ollama)" },
-    { value: "gemma", label: "Gemma (Ollama)" }
+    { value: "gemma", label: "Gemma (Ollama)" },
+    { value: "custom", label: "Custom Model..." }
   ],
   anthropic: [
     { value: "claude-3-5-sonnet-20240620", label: "Claude 3.5 Sonnet" },
-    { value: "claude-3-opus-20240229", label: "Claude 3 Opus" }
+    { value: "claude-3-opus-20240229", label: "Claude 3 Opus" },
+    { value: "custom", label: "Custom Model..." }
   ]
 };
 
@@ -507,6 +512,7 @@ export default function App() {
   const [logFormat, setLogFormat] = useState("Syslog");
   const [provider, setProvider] = useState("ollama");
   const [model, setModel] = useState("llama3");
+  const [customModel, setCustomModel] = useState("");
   const [apiUrl, setApiUrl] = useState(import.meta.env.VITE_API_URL || "http://localhost:8000");
   const [systemMode, setSystemMode] = useState("OFFLINE"); 
   const [liveLogUrl, setLiveLogUrl] = useState("");
@@ -526,6 +532,19 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('sentinel_forge_api_keys', JSON.stringify(apiKeys));
   }, [apiKeys]);
+
+  const [apiBaseUrls, setApiBaseUrls] = useState(() => {
+    try {
+      const saved = localStorage.getItem('sentinel_forge_api_base_urls');
+      return saved ? JSON.parse(saved) : { gemini: '', openai: '', groq: '', ollama: '', anthropic: '' };
+    } catch (e) {
+      return { gemini: '', openai: '', groq: '', ollama: '', anthropic: '' };
+    }
+  });
+
+  useEffect(() => {
+    localStorage.setItem('sentinel_forge_api_base_urls', JSON.stringify(apiBaseUrls));
+  }, [apiBaseUrls]);
 
   useEffect(() => {
     const models = PROVIDER_MODELS[provider];
@@ -646,7 +665,7 @@ export default function App() {
     return () => {
       if (timer) clearInterval(timer);
     };
-  }, [systemMode, isPolling, isLoggedIn, liveLogUrl, prompt, provider, model, apiUrl, isSimulating, simScenario, simFormat, simRate, simCustomIp, simCustomUser]);
+  }, [systemMode, isPolling, isLoggedIn, liveLogUrl, prompt, provider, model, customModel, apiBaseUrls, apiUrl, isSimulating, simScenario, simFormat, simRate, simCustomIp, simCustomUser]);
 
   // Restore session on mount
   useEffect(() => {
@@ -1012,8 +1031,10 @@ export default function App() {
     });
     setActiveStep('intent');
 
+    const activeModel = model === 'custom' ? customModel : model;
+
     addConsoleLog("🚀 Launching Sentinel Forge Log Intelligence pipeline...", 'system');
-    addConsoleLog(`Settings -> Provider: ${provider} | Model: ${model}`, 'info');
+    addConsoleLog(`Settings -> Provider: ${provider} | Model: ${activeModel}`, 'info');
 
     try {
       const orchestratorUrl = `${apiUrl}/analyze/stream`;
@@ -1027,8 +1048,9 @@ export default function App() {
           logs_raw: logsContent,
           log_format: logFormat,
           provider,
-          model,
-          api_key: provider !== "ollama" ? apiKeys[provider] : null
+          model: activeModel,
+          api_key: provider !== "ollama" ? apiKeys[provider] : null,
+          api_base_url: apiBaseUrls[provider] || null
         })
       });
 
@@ -1141,7 +1163,7 @@ export default function App() {
                 setFinalReport({
                   status: "Bad",
                   summary: `❌ Pipeline Execution Failed at ${eventData.agent} Agent\n\nUnable to execute subagent. Error:\n${eventData.error}`,
-                  recommendations: `1. **Verify Agent Status**: Make sure the subagent on its designated port (e.g. Intent: 8001, Data: 8002, etc.) is running.\n2. **Check Model Configurations**: Ensure model '${model}' is loaded in Ollama or API keys are valid.\n3. **Docker Logs**: Run \`docker compose logs\` to check for container exceptions.`,
+                  recommendations: `1. **Verify Agent Status**: Make sure the subagent on its designated port (e.g. Intent: 8001, Data: 8002, etc.) is running.\n2. **Check Model Configurations**: Ensure model '${activeModel}' is loaded in Ollama or API keys are valid.\n3. **Docker Logs**: Run \`docker compose logs\` to check for container exceptions.`,
                   affected_resources: []
                 });
                 setMitigationActions([]);
@@ -1333,7 +1355,7 @@ export default function App() {
       {/* Settings Drawer */}
       {showSettings && (
         <div className="bg-slate-950/90 backdrop-blur-xl border-b border-slate-800/80 px-6 py-5 z-20 relative transition-all duration-300 ease-in-out shadow-2xl">
-          <div className="max-w-7xl mx-auto grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+          <div className="max-w-7xl mx-auto grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-6">
             
             {/* Provider Selection */}
             <div>
@@ -1351,19 +1373,33 @@ export default function App() {
               </select>
             </div>
 
-            {/* Model Selection */}
-            <div>
-              <label className="block text-[10px] font-bold text-slate-400 mb-1.5 uppercase tracking-wider">Model Variant</label>
-              <select 
-                value={model} 
-                onChange={e => setModel(e.target.value)}
-                className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-200 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 transition-all cursor-pointer font-sans"
-              >
-                {(PROVIDER_MODELS[provider] || []).map(m => (
-                  <option key={m.value} value={m.value}>{m.label}</option>
-                ))}
-              </select>
-            </div>
+             {/* Model Selection */}
+             <div className="space-y-3">
+               <div>
+                 <label className="block text-[10px] font-bold text-slate-400 mb-1.5 uppercase tracking-wider">Model Variant</label>
+                 <select 
+                   value={model} 
+                   onChange={e => setModel(e.target.value)}
+                   className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-200 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 transition-all cursor-pointer font-sans"
+                 >
+                   {(PROVIDER_MODELS[provider] || []).map(m => (
+                     <option key={m.value} value={m.value}>{m.label}</option>
+                   ))}
+                 </select>
+               </div>
+               {model === 'custom' && (
+                 <div>
+                   <label className="block text-[10px] font-bold text-slate-400 mb-1.5 uppercase tracking-wider">Custom Model Identifier</label>
+                   <input 
+                     type="text"
+                     value={customModel}
+                     onChange={e => setCustomModel(e.target.value)}
+                     placeholder="e.g. llama3.1:latest, gpt-4-32k"
+                     className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-xs text-slate-200 outline-none focus:border-blue-500/80 focus:ring-2 focus:ring-blue-500/10 transition-all font-mono"
+                   />
+                 </div>
+               )}
+             </div>
 
             {/* API Host */}
             <div>
@@ -1398,6 +1434,27 @@ export default function App() {
                   <span className="text-[10px] text-slate-500 italic">No key required for local Ollama service.</span>
                 </div>
               )}
+            </div>
+
+            {/* Custom LLM API Endpoint */}
+            <div>
+              <label className="block text-[10px] font-bold text-slate-400 mb-1.5 uppercase tracking-wider">Custom Endpoint (API Base)</label>
+              <input 
+                type="text"
+                value={apiBaseUrls[provider] || ""}
+                onChange={e => {
+                  const val = e.target.value;
+                  setApiBaseUrls(prev => ({ ...prev, [provider]: val }));
+                }}
+                placeholder={
+                  provider === "gemini" ? "https://generativelanguage.googleapis.com" :
+                  provider === "openai" ? "https://api.openai.com/v1" :
+                  provider === "groq" ? "https://api.groq.com/openai/v1" :
+                  provider === "ollama" ? "http://localhost:11434/v1" :
+                  provider === "anthropic" ? "https://api.anthropic.com/v1" : ""
+                }
+                className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-200 font-mono outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 transition-all"
+              />
             </div>
 
           </div>

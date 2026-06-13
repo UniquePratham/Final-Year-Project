@@ -24,6 +24,7 @@ class AnalysisRequest(BaseModel):
     provider: Optional[str] = None
     model: Optional[str] = None
     api_key: Optional[str] = None
+    api_base_url: Optional[str] = None
 
 SYSTEM_INSTRUCTION = """You are the Analysis Agent for Sentinel Forge: AI Log Analyzer.
 Your role is to perform deep log intelligence analysis using pre-computed log metrics, a sample of log records, and the user's intent.
@@ -53,9 +54,9 @@ Response Schema (Strict JSON):
 Provide ONLY the raw JSON block. Do not include markdown fences, comments, or extra text.
 """
 
-def analyze_batch_with_llm(batch: List[NormalizedLog], intent: IntentObject, metrics: Dict[str, Any], provider: str, model: str, api_key: Optional[str] = None) -> Dict[str, Any]:
+def analyze_batch_with_llm(batch: List[NormalizedLog], intent: IntentObject, metrics: Dict[str, Any], provider: str, model: str, api_key: Optional[str] = None, base_url: Optional[str] = None) -> Dict[str, Any]:
     """Helper to analyze a single batch using LLM."""
-    adapter = AIAdapter(provider=provider, model=model, api_key=api_key)
+    adapter = AIAdapter(provider=provider, model=model, api_key=api_key, base_url=base_url)
     
     # Format log batch for LLM context
     log_sample = "\n".join([f"[{l.timestamp}] {l.level} | IP={l.source_ip} | User={l.user} | Service={l.service} | Msg: {l.message}" for l in batch[:10]])
@@ -125,7 +126,7 @@ async def analyze_metrics(request: AnalysisRequest):
         results = []
         with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(batches), 4)) as executor:
             future_to_batch = {
-                executor.submit(analyze_batch_with_llm, batch, request.intent, request.metrics, provider, model, request.api_key): i 
+                executor.submit(analyze_batch_with_llm, batch, request.intent, request.metrics, provider, model, request.api_key, request.api_base_url): i 
                 for i, batch in enumerate(batches[:4]) # Cap at 4 subagents for performance/cost
             }
             for future in concurrent.futures.as_completed(future_to_batch):

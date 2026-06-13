@@ -225,6 +225,22 @@ class LoginRequest(BaseModel):
     username: str
     password: str
 
+@app.get("/")
+async def root():
+    return {
+        "status": "healthy",
+        "service": "Sentinel Forge Central Orchestrator",
+        "version": "1.0.0"
+    }
+
+@app.get("/health")
+async def health():
+    return {
+        "status": "healthy",
+        "service": "Sentinel Forge Central Orchestrator",
+        "version": "1.0.0"
+    }
+
 # Auth Routes
 @app.post("/auth/signup")
 async def signup(req: SignupRequest):
@@ -259,6 +275,7 @@ class OrchestratorRequest(BaseModel):
     provider: Optional[str] = None
     model: Optional[str] = None
     api_key: Optional[str] = None
+    api_base_url: Optional[str] = None
 
 def save_run(run_id: str, prompt: str, log_format: str, status: str):
     conn = sqlite3.connect(DB_PATH)
@@ -301,7 +318,8 @@ async def run_orchestration_pipeline(run_id: str, request: OrchestratorRequest):
                 "prompt": request.prompt,
                 "provider": request.provider,
                 "model": request.model,
-                "api_key": request.api_key
+                "api_key": request.api_key,
+                "api_base_url": request.api_base_url
             }
             resp = await client.post(f"{INTENT_URL}/analyze-intent", json=intent_payload)
             resp.raise_for_status()
@@ -356,7 +374,8 @@ async def run_orchestration_pipeline(run_id: str, request: OrchestratorRequest):
                 "metrics": data_obj["metrics"],
                 "provider": request.provider,
                 "model": request.model,
-                "api_key": request.api_key
+                "api_key": request.api_key,
+                "api_base_url": request.api_base_url
             }
             resp = await client.post(f"{ANALYSIS_URL}/analyze-metrics", json=analysis_payload)
             resp.raise_for_status()
@@ -384,7 +403,8 @@ async def run_orchestration_pipeline(run_id: str, request: OrchestratorRequest):
                 "analysis_result": analysis_obj,
                 "provider": request.provider,
                 "model": request.model,
-                "api_key": request.api_key
+                "api_key": request.api_key,
+                "api_base_url": request.api_base_url
             }
             resp = await client.post(f"{REPORT_URL}/generate-report", json=report_payload)
             resp.raise_for_status()
@@ -411,7 +431,8 @@ async def run_orchestration_pipeline(run_id: str, request: OrchestratorRequest):
                 "final_report": report_obj,
                 "provider": request.provider,
                 "model": request.model,
-                "api_key": request.api_key
+                "api_key": request.api_key,
+                "api_base_url": request.api_base_url
             }
             resp = await client.post(f"{RESPONSE_URL}/mitigate-incident", json=response_payload)
             resp.raise_for_status()

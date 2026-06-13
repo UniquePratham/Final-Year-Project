@@ -22,6 +22,7 @@ class IntentRequest(BaseModel):
     provider: Optional[str] = None
     model: Optional[str] = None
     api_key: Optional[str] = None
+    api_base_url: Optional[str] = None
 
 SYSTEM_INSTRUCTION = """You are the Intent Agent for Sentinel Forge: AI Log Analyzer.
 Your task is to transform natural-language user prompts (which can be in any language) into structured machine-readable JSON objects matching the Intent schema.
@@ -96,7 +97,7 @@ async def analyze_intent(request: IntentRequest):
     model = request.model or get_config("DEFAULT_MODEL", "llama3")
     
     try:
-        adapter = AIAdapter(provider=provider, model=model, api_key=request.api_key)
+        adapter = AIAdapter(provider=provider, model=model, api_key=request.api_key, base_url=request.api_base_url)
         full_prompt = f"{FEW_SHOT_EXAMPLES}\n\nPrompt: \"{request.prompt}\"\nContext: {request.context or 'None'}\nResult:"
         
         response_text = adapter.generate(prompt=full_prompt, system_instruction=SYSTEM_INSTRUCTION)
