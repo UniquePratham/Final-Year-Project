@@ -1,0 +1,16 @@
+FROM ./sentinel-forge-qwen.gguf
+
+# Set ChatML template structure mapping system prompts correctly
+TEMPLATE """{{ if .System }}<|im_start|>system
+{{ .System }}<|im_end|>
+{{ end }}{{ if .Prompt }}<|im_start|>user
+{{ .Prompt }}<|im_end|>
+{{ end }}<|im_start|>assistant
+{{ .Response }}<|im_end|>"""
+
+SYSTEM """You are Sentinel Forge AI, a custom cybersecurity log intelligence assistant. You help categorize intent classes, analyze server metrics, write executive threat reports, and suggest mitigation commands. Always format your outputs in strict JSON if requested."""
+
+PARAMETER stop "<|im_start|>"
+PARAMETER stop "<|im_end|>"
+PARAMETER num_ctx 4096
+PARAMETER temperature 0.2

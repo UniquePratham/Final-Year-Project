@@ -71,3 +71,11 @@ Thumbs.db
 # Agent Workflows
 .agent/
 artifacts/
+
+# Finetuning files, weights, and repositories
+finetuning_a_model/lora_adapters/
+finetuning_a_model/merged_model/
+finetuning_a_model/results/
+finetuning_a_model/*.gguf
+finetuning_a_model/train_data.jsonl
+finetuning_a_model/llama.cpp/
