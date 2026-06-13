@@ -623,69 +623,109 @@ export default function App() {
   }, [provider, modelOptions]);
 
   const fetchCustomModels = async () => {
-    const baseUrl = apiBaseUrls[provider];
+    let baseUrl = apiBaseUrls[provider];
     if (!baseUrl) {
-      setFetchError("Please configure the Custom Endpoint base URL first.");
-      return;
+      if (provider === "openai") baseUrl = "https://api.openai.com/v1";
+      else if (provider === "groq") baseUrl = "https://api.groq.com/openai/v1";
+      else if (provider === "ollama") baseUrl = "http://localhost:11434/v1";
+      else if (provider === "anthropic") baseUrl = "https://api.anthropic.com/v1";
+      else if (provider === "gemini") baseUrl = "https://generativelanguage.googleapis.com";
+      else if (provider === "custom") baseUrl = "http://localhost:1234/v1";
+      else {
+        setFetchError("Please configure the Endpoint base URL first.");
+        return;
+      }
     }
     
     setFetchingModels(true);
     setFetchError("");
-    addConsoleLog(`Fetching models from custom endpoint: ${baseUrl}...`, 'info');
-    
-    const headers = {
-      "Content-Type": "application/json"
-    };
-    if (apiKeys[provider]) {
-      headers["Authorization"] = `Bearer ${apiKeys[provider]}`;
-    }
+    addConsoleLog(`Fetching models from ${provider} endpoint: ${baseUrl}...`, 'info');
     
     let modelsFound = [];
     
-    const tryFetch = async (url) => {
+    if (provider === "gemini") {
       try {
-        const res = await fetch(url, { headers });
+        const apiKey = apiKeys.gemini;
+        if (!apiKey) {
+          setFetchError("Gemini API key is required to load models.");
+          setFetchingModels(false);
+          return;
+        }
+        const url = `${baseUrl.replace(/\/$/, "")}/v1beta/models?key=${apiKey}`;
+        const res = await fetch(url);
         if (res.ok) {
           const data = await res.json();
-          if (data && Array.isArray(data.data)) {
-            return data.data.map(m => m.id).filter(Boolean);
-          }
           if (data && Array.isArray(data.models)) {
-            return data.models.map(m => m.name || m.model).filter(Boolean);
+            modelsFound = data.models.map(m => m.name.replace("models/", "")).filter(Boolean);
           }
-          if (Array.isArray(data)) {
-            return data.map(m => typeof m === 'object' ? (m.id || m.name) : m).filter(Boolean);
-          }
-          if (data && typeof data === 'object') {
-            if (data.id) return [data.id];
-            if (data.model) return [data.model];
-          }
+        } else {
+          console.warn("Gemini fetch failed with status:", res.status);
         }
       } catch (e) {
-        console.warn(`Failed fetch on ${url}:`, e);
+        console.warn("Gemini fetch error:", e);
       }
-      return null;
-    };
-    
-    const cleanBaseUrl = baseUrl.replace(/\/$/, "");
-    modelsFound = await tryFetch(`${cleanBaseUrl}/models`);
-    
-    if (!modelsFound || modelsFound.length === 0) {
-      modelsFound = await tryFetch(`${cleanBaseUrl}/model`);
-    }
-    
-    if (!modelsFound || modelsFound.length === 0) {
-      const rootUrl = cleanBaseUrl.replace(/\/v1$/, "");
-      modelsFound = await tryFetch(`${rootUrl}/api/tags`);
+    } else if (provider === "anthropic") {
+      modelsFound = [
+        "claude-3-5-sonnet-20241022",
+        "claude-3-5-sonnet-20240620",
+        "claude-3-5-haiku-20241022",
+        "claude-3-opus-20240229",
+        "claude-3-sonnet-20240229",
+        "claude-3-haiku-20240307"
+      ];
+    } else {
+      const headers = {
+        "Content-Type": "application/json"
+      };
+      if (apiKeys[provider]) {
+        headers["Authorization"] = `Bearer ${apiKeys[provider]}`;
+      }
+      
+      const tryFetch = async (url) => {
+        try {
+          const res = await fetch(url, { headers });
+          if (res.ok) {
+            const data = await res.json();
+            if (data && Array.isArray(data.data)) {
+              return data.data.map(m => m.id).filter(Boolean);
+            }
+            if (data && Array.isArray(data.models)) {
+              return data.models.map(m => m.name || m.model).filter(Boolean);
+            }
+            if (Array.isArray(data)) {
+              return data.map(m => typeof m === 'object' ? (m.id || m.name) : m).filter(Boolean);
+            }
+            if (data && typeof data === 'object') {
+              if (data.id) return [data.id];
+              if (data.model) return [data.model];
+            }
+          }
+        } catch (e) {
+          console.warn(`Failed fetch on ${url}:`, e);
+        }
+        return null;
+      };
+      
+      const cleanBaseUrl = baseUrl.replace(/\/$/, "");
+      modelsFound = await tryFetch(`${cleanBaseUrl}/models`);
+      
+      if (!modelsFound || modelsFound.length === 0) {
+        modelsFound = await tryFetch(`${cleanBaseUrl}/model`);
+      }
+      
+      if (!modelsFound || modelsFound.length === 0) {
+        const rootUrl = cleanBaseUrl.replace(/\/v1$/, "");
+        modelsFound = await tryFetch(`${rootUrl}/api/tags`);
+      }
     }
     
     if (modelsFound && modelsFound.length > 0) {
       setFetchedModels(prev => ({ ...prev, [provider]: modelsFound }));
       setModel(modelsFound[0]);
-      addConsoleLog(`Successfully loaded ${modelsFound.length} models from custom endpoint.`, 'success');
+      addConsoleLog(`Successfully loaded ${modelsFound.length} models for ${provider}.`, 'success');
     } else {
       setFetchError("Could not retrieve models. Ensure endpoint is active and CORS is enabled.");
-      addConsoleLog("⚠️ Failed to load models from custom endpoint. Check console/network logs.", 'warning');
+      addConsoleLog(`⚠️ Failed to load models for ${provider}. Check network logs or CORS headers.`, 'warning');
     }
     setFetchingModels(false);
   };
@@ -1596,7 +1636,7 @@ export default function App() {
                 }
                 className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-200 font-mono outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 transition-all"
               />
-              {(provider === 'custom' || provider === 'ollama' || model === 'custom') && (
+              {true && (
                 <>
                   <button
                     type="button"
