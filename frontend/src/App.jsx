@@ -685,7 +685,8 @@ export default function App() {
     if (isSimulating) {
       const fetchSimLogs = async () => {
         try {
-          const url = `${apiUrl}/simulator/logs?scenario=${encodeURIComponent(simScenario)}&format=${simFormat}&rate=${simRate}&duration=5` + 
+          const cleanApiUrl = apiUrl.replace(/\/+$/, "");
+          const url = `${cleanApiUrl}/simulator/logs?scenario=${encodeURIComponent(simScenario)}&format=${simFormat}&rate=${simRate}&duration=5` + 
                       (simCustomIp ? `&ip=${simCustomIp}` : "") + 
                       (simCustomUser ? `&user=${simCustomUser}` : "");
                       
@@ -765,8 +766,9 @@ export default function App() {
     }
     
     try {
+      const cleanApiUrl = apiUrl.replace(/\/+$/, "");
       const endpoint = authMode === 'login' ? '/auth/login' : '/auth/signup';
-      const response = await fetch(`${apiUrl}${endpoint}`, {
+      const response = await fetch(`${cleanApiUrl}${endpoint}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -979,7 +981,8 @@ export default function App() {
     setSystemMode("ONLINE");
     
     // 2. Build the simulator URL
-    const simUrl = `${apiUrl}/simulator/logs?scenario=${encodeURIComponent(simScenario)}&format=${simFormat}&rate=${simRate}` + 
+    const cleanApiUrl = apiUrl.replace(/\/+$/, "");
+    const simUrl = `${cleanApiUrl}/simulator/logs?scenario=${encodeURIComponent(simScenario)}&format=${simFormat}&rate=${simRate}` + 
                    (simCustomIp ? `&ip=${simCustomIp}` : "") + 
                    (simCustomUser ? `&user=${simCustomUser}` : "");
     setLiveLogUrl(simUrl);
@@ -1039,7 +1042,8 @@ export default function App() {
     addConsoleLog(`Settings -> Provider: ${provider} | Model: ${activeModel}`, 'info');
 
     try {
-      const orchestratorUrl = `${apiUrl}/analyze/stream`;
+      const cleanApiUrl = apiUrl.replace(/\/+$/, "");
+      const orchestratorUrl = `${cleanApiUrl}/analyze/stream`;
       addConsoleLog("Connecting to Central Orchestrator stream...", 'info');
       
       const response = await fetch(orchestratorUrl, {
