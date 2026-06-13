@@ -25,20 +25,35 @@ class AIAdapter:
             self.base_url = "https://api.anthropic.com/v1"
 
     def generate(self, prompt: str, system_instruction: str = "") -> str:
-        """Synchronously generate text response from LLM."""
+        """Synchronously generate text response from LLM with automatic retries for rate limits or timeouts."""
+        import time
         logger.info(f"Generating content using provider={self.provider}, model={self.model}")
-        try:
-            if self.provider == "gemini":
-                return self._generate_gemini(prompt, system_instruction)
-            elif self.provider in ["openai", "groq", "openrouter", "ollama", "custom"]:
-                return self._generate_openai_compatible(prompt, system_instruction)
-            elif self.provider == "anthropic":
-                return self._generate_anthropic(prompt, system_instruction)
-            else:
-                raise ValueError(f"Unsupported provider: {self.provider}")
-        except Exception as e:
-            logger.error(f"Error generating from {self.provider}: {e}")
-            raise
+        
+        max_retries = 3
+        backoff = 2.0
+        
+        for attempt in range(max_retries + 1):
+            try:
+                if self.provider == "gemini":
+                    return self._generate_gemini(prompt, system_instruction)
+                elif self.provider in ["openai", "groq", "openrouter", "ollama", "custom"]:
+                    return self._generate_openai_compatible(prompt, system_instruction)
+                elif self.provider == "anthropic":
+                    return self._generate_anthropic(prompt, system_instruction)
+                else:
+                    raise ValueError(f"Unsupported provider: {self.provider}")
+            except Exception as e:
+                err_str = str(e).lower()
+                is_rate_limit = "429" in err_str or "resourceexhausted" in err_str or "rate limit" in err_str or "quota" in err_str
+                is_timeout = isinstance(e, (httpx.TimeoutException, httpx.NetworkError)) or "timeout" in err_str
+                
+                if attempt < max_retries and (is_rate_limit or is_timeout):
+                    sleep_time = backoff * (2 ** attempt)
+                    logger.warning(f"Attempt {attempt + 1} failed for {self.provider} due to rate limit/timeout. Retrying in {sleep_time:.1f}s... Error: {e}")
+                    time.sleep(sleep_time)
+                else:
+                    logger.error(f"Error generating from {self.provider} after {attempt + 1} attempts: {e}")
+                    raise
 
     def stream(self, prompt: str, system_instruction: str = "") -> Generator[str, None, None]:
         """Stream token-by-token response from LLM."""
@@ -92,7 +107,7 @@ class AIAdapter:
             "messages": messages
         }
 
-        with httpx.Client(timeout=30.0) as client:
+        with httpx.Client(timeout=90.0) as client:
             resp = client.post(f"{self.base_url}/chat/completions", headers=headers, json=payload)
             resp.raise_for_status()
             data = resp.json()
@@ -114,7 +129,7 @@ class AIAdapter:
             "stream": True
         }
 
-        with httpx.Client(timeout=30.0) as client:
+        with httpx.Client(timeout=90.0) as client:
             with client.stream("POST", f"{self.base_url}/chat/completions", headers=headers, json=payload) as response:
                 response.raise_for_status()
                 for line in response.iter_lines():
@@ -147,7 +162,7 @@ class AIAdapter:
         if system_instruction:
             payload["system"] = system_instruction
 
-        with httpx.Client(timeout=30.0) as client:
+        with httpx.Client(timeout=90.0) as client:
             resp = client.post(f"{self.base_url}/messages", headers=headers, json=payload)
             resp.raise_for_status()
             data = resp.json()
@@ -168,7 +183,7 @@ class AIAdapter:
         if system_instruction:
             payload["system"] = system_instruction
 
-        with httpx.Client(timeout=30.0) as client:
+        with httpx.Client(timeout=90.0) as client:
             with client.stream("POST", f"{self.base_url}/messages", headers=headers, json=payload) as response:
                 response.raise_for_status()
                 for line in response.iter_lines():
