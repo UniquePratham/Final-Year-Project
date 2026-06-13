@@ -1,0 +1,72 @@
+# Dependency Directories
+node_modules/
+jspm_packages/
+web_loaders/
+.venv/
+venv/
+env/
+ENV/
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+frontend/node_modules/
+backend/node_modules/
+
+# Python Build and Cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.coverage
+htmlcov/
+.ipynb_checkpoints/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# React / Frontend Build Outputs
+frontend/dist/
+frontend/dist-ssr/
+frontend/.eslintcache
+
+# Electron / Desktop Build Outputs
+desktop/node_modules/
+desktop/dist/
+desktop/dist-app/
+
+# SQLite databases & runtime storage
+*.db
+*.sqlite
+*.sqlite3
+backend/orchestrator/db/
+
+# Logs and runtime dumps
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# OS Files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Editor Configurations
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Agent Workflows
+.agent/
+artifacts/

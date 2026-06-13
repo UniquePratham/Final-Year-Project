@@ -1,0 +1,73 @@
+version: '3.8'
+
+services:
+  orchestrator:
+    build:
+      context: .
+      dockerfile: backend/orchestrator/Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - INTENT_SERVICE_URL=http://agent-intent:8001
+      - DATA_SERVICE_URL=http://agent-data:8002
+      - ANALYSIS_SERVICE_URL=http://agent-analysis:8003
+      - REPORT_SERVICE_URL=http://agent-report:8004
+      - RESPONSE_SERVICE_URL=http://agent-response:8005
+      - DEFAULT_PROVIDER=ollama
+      - DEFAULT_MODEL=llama3
+    volumes:
+      - ./backend/orchestrator/db:/app/orchestrator/db
+    depends_on:
+      - agent-intent
+      - agent-data
+      - agent-analysis
+      - agent-report
+      - agent-response
+
+  agent-intent:
+    build:
+      context: .
+      dockerfile: backend/agent_intent/Dockerfile
+    ports:
+      - "8001:8001"
+    environment:
+      - DEFAULT_PROVIDER=ollama
+      - DEFAULT_MODEL=llama3
+
+  agent-data:
+    build:
+      context: .
+      dockerfile: backend/agent_data/Dockerfile
+    ports:
+      - "8002:8002"
+
+  agent-analysis:
+    build:
+      context: .
+      dockerfile: backend/agent_analysis/Dockerfile
+    ports:
+      - "8003:8003"
+    environment:
+      - DEFAULT_PROVIDER=ollama
+      - DEFAULT_MODEL=llama3
+
+  agent-report:
+    build:
+      context: .
+      dockerfile: backend/agent_report/Dockerfile
+    ports:
+      - "8004:8004"
+    environment:
+      - DEFAULT_PROVIDER=ollama
+      - DEFAULT_MODEL=llama3
+
+  agent-response:
+    build:
+      context: .
+      dockerfile: backend/agent_response/Dockerfile
+    ports:
+      - "8005:8005"
+    environment:
+      - DEFAULT_PROVIDER=ollama
+      - DEFAULT_MODEL=llama3
+

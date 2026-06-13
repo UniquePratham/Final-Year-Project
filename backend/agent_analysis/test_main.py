@@ -1,0 +1,79 @@
+import os
+import sys
+import pytest
+from fastapi.testclient import TestClient
+
+# Adjust path to find backend and modules
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
+
+from backend.agent_analysis.main import app
+from backend.shared.ai_adapter import AIAdapter
+
+client = TestClient(app)
+
+def test_analyze_metrics_empty_logs():
+    payload = {
+        "intent": {
+            "intent_class": "Security",
+            "entities": {},
+            "conditions": {},
+            "raw_prompt": "Check logs"
+        },
+        "logs": [],
+        "metrics": {
+            "total_records": 0,
+            "filtered_records": 0
+        }
+    }
+    response = client.post("/analyze-metrics", json=payload)
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["anomalies"]) == 0
+    assert data["severity"] == "LOW"
+    assert "No relevant log entries" in data["findings"][0]
+
+def test_analyze_metrics_success_with_mock(monkeypatch):
+    mock_json = """
+    {
+      "anomalies": [
+        {
+          "description": "Brute force attempt detected",
+          "timestamp": "2026-06-12T15:45:20Z",
+          "source_ip": "192.168.1.105",
+          "severity": "HIGH"
+        }
+      ],
+      "trend": "degrading",
+      "severity": "HIGH",
+      "confidence_score": 0.9,
+      "findings": [
+        "Multiple failed login attempts observed on host"
+      ]
+    }
+    """
+    monkeypatch.setattr(AIAdapter, "generate", lambda *args, **kwargs: mock_json)
+    
+    payload = {
+        "intent": {
+            "intent_class": "Security",
+            "entities": {"ip_address": "192.168.1.105"},
+            "conditions": {"threshold": 3},
+            "raw_prompt": "Detect logins from 192.168.1.105"
+        },
+        "logs": [
+            {"timestamp": "2026-06-12T15:45:20Z", "level": "ERROR", "message": "Failed login", "source_ip": "192.168.1.105", "raw": "..."}
+        ],
+        "metrics": {
+            "total_records": 1,
+            "filtered_records": 1,
+            "error_count": 3
+        }
+    }
+    
+    response = client.post("/analyze-metrics", json=payload)
+    assert response.status_code == 200
+    data = response.json()
+    assert data["severity"] == "HIGH"
+    assert data["trend"] == "degrading"
+    assert len(data["anomalies"]) == 1
+    assert "Brute force" in data["anomalies"][0]["description"]

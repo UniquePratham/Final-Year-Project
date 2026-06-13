@@ -1,0 +1,32 @@
+{
+  "name": "sentinel-forge-desktop",
+  "version": "1.0.0",
+  "main": "main.js",
+  "description": "Sentinel Forge - AI Log Intelligence Platform",
+  "author": "Pratham Agarwal",
+  "scripts": {
+    "start": "electron .",
+    "copy-dist": "node copy-dist.js",
+    "package": "npm run copy-dist && electron-builder build --win"
+  },
+  "devDependencies": {
+    "electron": "^30.0.0",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.sentinelforge.app",
+    "productName": "Sentinel Forge",
+    "directories": {
+      "output": "dist-app"
+    },
+    "files": [
+      "main.js",
+      "dist/**/*",
+      "icon.png"
+    ],
+    "win": {
+      "icon": "icon.png",
+      "target": "nsis"
+    }
+  }
+}

@@ -1,0 +1,52 @@
+import os
+import sys
+import pytest
+from fastapi.testclient import TestClient
+
+# Adjust path to find backend and modules
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
+
+from backend.agent_intent.main import app
+from backend.shared.ai_adapter import AIAdapter
+
+client = TestClient(app)
+
+def test_analyze_intent_success(monkeypatch):
+    # Mock AIAdapter.generate to return a valid JSON string
+    mock_json = """
+    {
+      "intent_class": "Security",
+      "entities": {
+        "ip_address": "192.168.1.100",
+        "user": "admin",
+        "resource": "firewall"
+      },
+      "conditions": {
+        "threshold": 10,
+        "time_window": "10m"
+      },
+      "raw_prompt": "Detect login failures from 192.168.1.100"
+    }
+    """
+    monkeypatch.setattr(AIAdapter, "generate", lambda *args, **kwargs: mock_json)
+
+    response = client.post(
+        "/analyze-intent",
+        json={"prompt": "Detect login failures from 192.168.1.100"}
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["intent_class"] == "Security"
+    assert data["entities"]["ip_address"] == "192.168.1.100"
+    assert data["conditions"]["threshold"] == 10
+
+def test_analyze_intent_invalid_json(monkeypatch):
+    # Mock AIAdapter.generate to return non-JSON output
+    monkeypatch.setattr(AIAdapter, "generate", lambda *args, **kwargs: "Internal server error or generic text")
+
+    response = client.post(
+        "/analyze-intent",
+        json={"prompt": "Some query"}
+    )
+    assert response.status_code == 502
+    assert "invalid JSON" in response.json()["detail"]
