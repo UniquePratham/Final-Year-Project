@@ -781,8 +781,16 @@ export default function App() {
       setModel(modelsFound[0]);
       addConsoleLog(`Successfully loaded ${modelsFound.length} models for ${provider}.`, 'success');
     } else {
-      setFetchError(`Could not retrieve models from ${baseUrl}. Ensure the endpoint is active, running, and spelling is correct.`);
-      addConsoleLog(`⚠️ Failed to load models for ${provider} from ${baseUrl}. Check network logs or spelling.`, 'warning');
+      const isBaseUrlLocal = baseUrl.includes("localhost") || baseUrl.includes("127.0.0.1") || baseUrl.includes("::1");
+      const isWindowRemote = window.location.hostname !== "localhost" && window.location.hostname !== "127.0.0.1";
+      
+      if (isBaseUrlLocal && isWindowRemote) {
+        setFetchError(`Could not retrieve models from local Ollama (${baseUrl}). Since you are running the app from a remote domain (${window.location.hostname}), browser security requires Ollama to be started with OLLAMA_ORIGINS="*" env variable. Alternatively, run the desktop setup app to bypass CORS.`);
+        addConsoleLog(`⚠️ CORS Block: To connect to local Ollama from a remote web app, restart Ollama with environment variable: set OLLAMA_ORIGINS=*`, 'warning');
+      } else {
+        setFetchError(`Could not retrieve models from ${baseUrl}. Ensure the endpoint is active, running, and spelling is correct.`);
+        addConsoleLog(`⚠️ Failed to load models for ${provider} from ${baseUrl}. Check network logs or spelling.`, 'warning');
+      }
     }
     setFetchingModels(false);
   };
