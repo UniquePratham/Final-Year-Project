@@ -595,7 +595,11 @@ export default function App() {
         const merged = { ...defaults };
         Object.keys(defaults).forEach(key => {
           if (parsed[key] !== undefined && parsed[key] !== '') {
-            merged[key] = parsed[key];
+            let val = parsed[key];
+            if (val.includes("locathost")) {
+              val = val.replace("locathost", "localhost");
+            }
+            merged[key] = val;
           }
         });
         return merged;
@@ -777,8 +781,8 @@ export default function App() {
       setModel(modelsFound[0]);
       addConsoleLog(`Successfully loaded ${modelsFound.length} models for ${provider}.`, 'success');
     } else {
-      setFetchError("Could not retrieve models. Ensure endpoint is active and CORS is enabled.");
-      addConsoleLog(`⚠️ Failed to load models for ${provider}. Check network logs or CORS headers.`, 'warning');
+      setFetchError(`Could not retrieve models from ${baseUrl}. Ensure the endpoint is active, running, and spelling is correct.`);
+      addConsoleLog(`⚠️ Failed to load models for ${provider} from ${baseUrl}. Check network logs or spelling.`, 'warning');
     }
     setFetchingModels(false);
   };
