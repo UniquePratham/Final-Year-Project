@@ -74,3 +74,35 @@ def test_process_data_json_success():
     assert len(data["logs_normalized"]) == 2
     assert data["metrics"]["warning_count"] == 1
     assert data["metrics"]["total_records"] == 2
+
+def test_process_data_timezone_and_null_filters():
+    intent_payload = {
+        "intent_class": "Security",
+        "entities": {
+            "ip_address": "null",
+            "user": "None",
+            "resource": ""
+        },
+        "conditions": {
+            "threshold": "null",
+            "time_window": "24h"
+        },
+        "raw_prompt": "Show all logs from the last day"
+    }
+    
+    json_raw = (
+        '{"timestamp": "13/Jun/2026:00:20:18 +0000", "level": "INFO", "message": "hello", "source_ip": "192.168.1.10"}\n'
+    )
+    
+    payload = {
+        "intent": intent_payload,
+        "logs_raw": json_raw,
+        "log_format": "JSON"
+    }
+    
+    response = client.post("/process-data", json=payload)
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["logs_normalized"]) == 1
+    assert data["metrics"]["total_records"] == 1
+

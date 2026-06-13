@@ -4,7 +4,7 @@ import re
 import csv
 import json
 import xml.etree.ElementTree as ET
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Any, Optional
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
@@ -190,8 +190,13 @@ def parse_timestamp(ts_str: str) -> datetime:
             # Handle Syslog traditional (e.g., "Jun 12 15:45:20" - append current year)
             if fmt == "%b %d %H:%M:%S":
                 parsed = datetime.strptime(ts_str, fmt)
-                return parsed.replace(year=datetime.utcnow().year)
-            return datetime.strptime(ts_str, fmt)
+                parsed = parsed.replace(year=datetime.utcnow().year)
+            else:
+                parsed = datetime.strptime(ts_str, fmt)
+            
+            if parsed.tzinfo is not None:
+                parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+            return parsed
         except Exception:
             continue
     # Fallback to current time if unparseable
@@ -202,11 +207,21 @@ def apply_filters(logs: List[NormalizedLog], intent: IntentObject) -> List[Norma
     entities = intent.entities or {}
     conditions = intent.conditions or {}
     
-    # Extract filter attributes
-    target_ip = entities.get("ip_address")
-    target_user = entities.get("user")
-    target_resource = entities.get("resource")
-    time_window = conditions.get("time_window")
+    # Helper to clean string values
+    def clean_val(v):
+        if v is None:
+            return None
+        if isinstance(v, str):
+            s = v.strip()
+            if s.lower() in ("null", "none", "undefined", ""):
+                return None
+            return s
+        return v
+
+    target_ip = clean_val(entities.get("ip_address"))
+    target_user = clean_val(entities.get("user"))
+    target_resource = clean_val(entities.get("resource"))
+    time_window = clean_val(conditions.get("time_window"))
     
     cutoff_time = None
     if time_window:

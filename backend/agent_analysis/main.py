@@ -113,7 +113,19 @@ async def analyze_metrics(request: AnalysisRequest):
     error_ratio = request.metrics.get("error_count", 0) / max(request.metrics.get("total_records", 1), 1)
     
     if request.intent.intent_class == "Security":
-        if request.metrics.get("error_count", 0) >= request.intent.conditions.get("threshold", 5):
+        threshold = request.intent.conditions.get("threshold")
+        if threshold is not None:
+            try:
+                if isinstance(threshold, str) and threshold.lower() in ("null", "none", "undefined", ""):
+                    threshold = 5
+                else:
+                    threshold = int(threshold)
+            except (ValueError, TypeError):
+                threshold = 5
+        else:
+            threshold = 5
+
+        if request.metrics.get("error_count", 0) >= threshold:
             rule_findings.append(f"Rule Alert: Brute-force threshold exceeded. {request.metrics.get('error_count')} authentication failures detected.")
             rule_severity = "HIGH"
             
