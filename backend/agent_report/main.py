@@ -96,8 +96,8 @@ async def generate_report(request: ReportRequest):
         if request.metrics:
             m = request.metrics
             recency = m.get("log_recency", "unknown")
-            metrics_section = f"""  - Total Log Records: {m.get('total_records', 'N/A')}
-  - Filtered Records: {m.get('filtered_records', 'N/A')}
+            metrics_section = f"""  - Total Sub-log Records: {m.get('total_records', 'N/A')}
+  - Filtered Sub-log Records: {m.get('filtered_records', 'N/A')}
   - Error Count: {m.get('error_count', 0)}
   - Warning Count: {m.get('warning_count', 0)}
   - Unique Source IPs: {m.get('unique_ips_count', 0)}

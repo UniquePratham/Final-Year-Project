@@ -586,7 +586,10 @@ def apply_filters(logs: List[NormalizedLog], intent: IntentObject) -> List[Norma
     }
     
     is_threat_scenario = False
-    if target_resource:
+    raw_prompt_lower = (intent.raw_prompt or "").lower()
+    if any(kw in raw_prompt_lower for kw in THREAT_AND_SCENARIO_KEYWORDS):
+        is_threat_scenario = True
+    elif target_resource:
         tr_lower = target_resource.lower()
         if any(kw in tr_lower for kw in THREAT_AND_SCENARIO_KEYWORDS):
             is_threat_scenario = True
@@ -612,7 +615,18 @@ def apply_filters(logs: List[NormalizedLog], intent: IntentObject) -> List[Norma
         if target_user and log.user != target_user:
             continue
         if target_resource and not is_threat_scenario:
-            if target_resource.lower() not in log.message.lower() and target_resource.lower() not in (log.service or "").lower():
+            res_lower = target_resource.lower()
+            msg_lower = log.message.lower()
+            svc_lower = (log.service or "").lower()
+            match_found = (res_lower in msg_lower) or (res_lower in svc_lower)
+            if not match_found:
+                # Relaxed matching: check if any significant service word matches
+                words = [w for w in re.split(r'\W+', res_lower) if w and w not in ("server", "service", "system", "host", "db", "app")]
+                if words:
+                    match_found = any(w in msg_lower or w in svc_lower for w in words)
+                else:
+                    match_found = True  # Fall back to matched if only generic words
+            if not match_found:
                 continue
         filtered.append(log)
     return filtered

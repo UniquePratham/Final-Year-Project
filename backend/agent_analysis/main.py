@@ -89,8 +89,26 @@ def run_rule_engine(intent: IntentObject, metrics: Dict[str, Any], logs: List[No
     user_dist = metrics.get("user_distribution", {})
     error_ratio = error_count / max(filtered, 1)
 
-    # --- Security intent rules ---
-    if intent.intent_class == "Security":
+    def set_severity(new_sev, new_conf):
+        nonlocal severity, confidence
+        if SEVERITY_RANK.get(new_sev, 0) > SEVERITY_RANK.get(severity, 0):
+            severity = new_sev
+            confidence = new_conf
+        elif SEVERITY_RANK.get(new_sev, 0) == SEVERITY_RANK.get(severity, 0):
+            confidence = max(confidence, new_conf)
+
+    # --- Step 0: Check for DDoS / DoS queries (independent of intent class classification) ---
+    is_ddos_query = False
+    if intent.raw_prompt:
+        p_lower = intent.raw_prompt.lower()
+        if any(kw in p_lower for kw in ("ddos", "dos", "denial of service", "traffic spike", "rate limit")):
+            is_ddos_query = True
+    if intent.entities and intent.entities.get("resource"):
+        r_lower = str(intent.entities.get("resource")).lower()
+        if any(kw in r_lower for kw in ("ddos", "dos", "denial of service", "traffic spike", "rate limit")):
+            is_ddos_query = True
+
+    if is_ddos_query:
         threshold = intent.conditions.get("threshold")
         if threshold is not None:
             try:
@@ -103,59 +121,89 @@ def run_rule_engine(intent: IntentObject, metrics: Dict[str, Any], logs: List[No
         else:
             threshold = 5
 
-        def set_severity(new_sev, new_conf):
-            nonlocal severity, confidence
-            if SEVERITY_RANK.get(new_sev, 0) > SEVERITY_RANK.get(severity, 0):
-                severity = new_sev
-                confidence = new_conf
-            elif SEVERITY_RANK.get(new_sev, 0) == SEVERITY_RANK.get(severity, 0):
-                confidence = max(confidence, new_conf)
-
-        # Rule: DDoS / DoS detection
-        is_ddos_query = False
-        if intent.raw_prompt:
-            p_lower = intent.raw_prompt.lower()
-            if any(kw in p_lower for kw in ("ddos", "dos", "denial of service", "traffic spike", "rate limit")):
-                is_ddos_query = True
-        if intent.entities and intent.entities.get("resource"):
-            r_lower = str(intent.entities.get("resource")).lower()
-            if any(kw in r_lower for kw in ("ddos", "dos", "denial of service", "traffic spike", "rate limit")):
-                is_ddos_query = True
-
-        if is_ddos_query:
-            ddos_ips = []
-            for ip_entry in top_ips:
-                if isinstance(ip_entry, (list, tuple)) and len(ip_entry) >= 2:
-                    ip, cnt = ip_entry[0], ip_entry[1]
-                    if isinstance(cnt, int) and cnt >= threshold:
-                        ddos_ips.append((ip, cnt))
-            
-            if ddos_ips:
-                if len(ddos_ips) >= 3:
-                    findings.append(
-                        f"ALERT: Distributed Denial of Service (DDoS) attack detected — {len(ddos_ips)} IPs generating high volume of requests (threshold: {threshold})."
-                    )
-                    for ip, cnt in ddos_ips:
-                        anomalies.append({
-                            "description": f"DDoS traffic source: {cnt} requests",
-                            "timestamp": None,
-                            "source_ip": str(ip),
-                            "severity": "CRITICAL"
-                        })
-                    set_severity("CRITICAL", 0.98)
-                else:
-                    top_ip, top_count = ddos_ips[0]
-                    findings.append(
-                        f"ALERT: Potential Denial of Service (DoS) attack from IP {top_ip} generating {top_count} requests (threshold: {threshold})."
-                    )
+        ddos_ips = []
+        for ip_entry in top_ips:
+            if isinstance(ip_entry, (list, tuple)) and len(ip_entry) >= 2:
+                ip, cnt = ip_entry[0], ip_entry[1]
+                if isinstance(cnt, int) and cnt >= threshold:
+                    ddos_ips.append((ip, cnt))
+        
+        if ddos_ips:
+            if len(ddos_ips) >= 3:
+                findings.append(
+                    f"ALERT: Distributed Denial of Service (DDoS) attack detected — {len(ddos_ips)} IPs generating high volume of requests (threshold: {threshold})."
+                )
+                for ip, cnt in ddos_ips:
                     anomalies.append({
-                        "description": f"DoS attack source: {top_count} requests",
+                        "description": f"DDoS traffic source: {cnt} requests",
                         "timestamp": None,
-                        "source_ip": str(top_ip),
-                        "severity": "HIGH"
+                        "source_ip": str(ip),
+                        "severity": "CRITICAL"
                     })
-                    set_severity("HIGH", 0.95)
-        else:
+                set_severity("CRITICAL", 0.98)
+            else:
+                top_ip, top_count = ddos_ips[0]
+                findings.append(
+                    f"ALERT: Potential Denial of Service (DoS) attack from IP {top_ip} generating {top_count} requests (threshold: {threshold})."
+                )
+                anomalies.append({
+                    "description": f"DoS attack source: {top_count} requests",
+                    "timestamp": None,
+                    "source_ip": str(top_ip),
+                    "severity": "HIGH"
+                })
+                set_severity("HIGH", 0.95)
+
+    # --- Step 1: Standard intent class rules (if not a DDoS query) ---
+    else:
+        # Check for high request volume spike (potential DDoS/DoS) independent of prompt text
+        metric_ddos_ips = []
+        for ip_entry in top_ips:
+            if isinstance(ip_entry, (list, tuple)) and len(ip_entry) >= 2:
+                ip, cnt = ip_entry[0], ip_entry[1]
+                if isinstance(cnt, int) and cnt >= 15:
+                    metric_ddos_ips.append((ip, cnt))
+        
+        if metric_ddos_ips:
+            if len(metric_ddos_ips) >= 3:
+                findings.append(
+                    f"ALERT: High volume traffic pattern matching DDoS attack detected — {len(metric_ddos_ips)} IPs generating high volume of requests (15+ each)."
+                )
+                for ip, cnt in metric_ddos_ips:
+                    anomalies.append({
+                        "description": f"DDoS traffic source: {cnt} requests",
+                        "timestamp": None,
+                        "source_ip": str(ip),
+                        "severity": "CRITICAL"
+                    })
+                set_severity("CRITICAL", 0.98)
+            else:
+                top_ip, top_count = metric_ddos_ips[0]
+                findings.append(
+                    f"ALERT: High volume traffic pattern matching DoS/spike detected from IP {top_ip} generating {top_count} requests."
+                )
+                anomalies.append({
+                    "description": f"High traffic source: {top_count} requests",
+                    "timestamp": None,
+                    "source_ip": str(top_ip),
+                    "severity": "HIGH"
+                })
+                set_severity("HIGH", 0.95)
+
+        # --- Security intent rules ---
+        if intent.intent_class == "Security":
+            threshold = intent.conditions.get("threshold")
+            if threshold is not None:
+                try:
+                    if isinstance(threshold, str) and threshold.lower() in ("null", "none", "undefined", ""):
+                        threshold = 5
+                    else:
+                        threshold = int(threshold)
+                except (ValueError, TypeError):
+                    threshold = 5
+            else:
+                threshold = 5
+
             # Rule: brute-force threshold exceeded
             if error_count >= threshold:
                 findings.append(
@@ -197,27 +245,27 @@ def run_rule_engine(intent: IntentObject, metrics: Dict[str, Any], logs: List[No
                         f"Consider locking these accounts."
                     )
 
-    # --- Performance intent rules ---
-    elif intent.intent_class == "Performance":
-        if warning_count > filtered * 0.3:
-            findings.append(f"WARNING: {warning_count}/{filtered} logs are warnings ({warning_count/filtered:.0%}).")
-            severity = "MEDIUM"
-            confidence = 0.8
-        if error_ratio > 0.1:
-            findings.append(f"ERROR: {error_count}/{filtered} logs indicate errors ({error_ratio:.0%}).")
-            severity = "HIGH"
-            confidence = 0.85
+        # --- Performance intent rules ---
+        elif intent.intent_class == "Performance":
+            if warning_count > filtered * 0.3:
+                findings.append(f"WARNING: {warning_count}/{filtered} logs are warnings ({warning_count/filtered:.0%}).")
+                severity = "MEDIUM"
+                confidence = 0.8
+            if error_ratio > 0.1:
+                findings.append(f"ERROR: {error_count}/{filtered} logs indicate errors ({error_ratio:.0%}).")
+                severity = "HIGH"
+                confidence = 0.85
 
-    # --- Availability intent rules ---
-    elif intent.intent_class == "Availability":
-        if error_ratio > 0.5:
-            findings.append(f"CRITICAL: {error_ratio:.0%} failure rate — service likely down.")
-            severity = "CRITICAL"
-            confidence = 0.95
-        elif error_ratio > 0.2:
-            findings.append(f"WARNING: {error_ratio:.0%} failure rate — service degraded.")
-            severity = "HIGH"
-            confidence = 0.85
+        # --- Availability intent rules ---
+        elif intent.intent_class == "Availability":
+            if error_ratio > 0.5:
+                findings.append(f"CRITICAL: {error_ratio:.0%} failure rate — service likely down.")
+                severity = "CRITICAL"
+                confidence = 0.95
+            elif error_ratio > 0.2:
+                findings.append(f"WARNING: {error_ratio:.0%} failure rate — service degraded.")
+                severity = "HIGH"
+                confidence = 0.85
 
     # --- Universal high-error-ratio rule ---
     if error_ratio > 0.5 and SEVERITY_RANK.get(severity, 1) < 4:
@@ -269,10 +317,10 @@ def analyze_batch_with_llm(
     User Prompt: {intent.raw_prompt}
 
     === Pre-Computed Metrics ===
-    - Total Logs: {metrics.get('total_records', 0)}
-    - Filtered Logs: {metrics.get('filtered_records', 0)}
-    - Error Logs: {metrics.get('error_count', 0)}
-    - Warning Logs: {metrics.get('warning_count', 0)}
+    - Total Sub-logs: {metrics.get('total_records', 0)}
+    - Filtered Sub-logs: {metrics.get('filtered_records', 0)}
+    - Error Sub-logs: {metrics.get('error_count', 0)}
+    - Warning Sub-logs: {metrics.get('warning_count', 0)}
     - Unique Source IPs: {metrics.get('unique_ips_count', 0)}
     - Top Source IPs (IP, count): {json.dumps(metrics.get('top_ips', []))}
     - Level Distribution: {json.dumps(metrics.get('level_distribution', {}))}
@@ -282,7 +330,7 @@ def analyze_batch_with_llm(
     === Rule-Based Pre-Analysis ===
 {pre_analysis}
 
-    === Log Records Sample ({min(len(batch), 30)} of {len(batch)} in this batch) ===
+    === Sub-log Records Sample ({min(len(batch), 30)} of {len(batch)} in this batch) ===
     {log_sample}
     """
 

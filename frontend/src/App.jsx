@@ -1005,7 +1005,7 @@ export default function App() {
           if (response.ok) {
             const rawText = await response.text();
             if (rawText.trim()) {
-              addConsoleLog(`[Ingested Live logs]: Received new chunk. Appending to history buffer...`, 'success');
+              addConsoleLog(`[Ingested Live sub-logs]: Received new chunk. Appending to history buffer...`, 'success');
               setLogs(prev => {
                 const combined = prev ? prev + "\n" + rawText : rawText;
                 const lines = combined.split("\n").filter(Boolean);
@@ -1036,7 +1036,7 @@ export default function App() {
               }, 0);
               return trimmed;
             });
-            addConsoleLog(`[Ingested Live logs (Sandbox)]: Generated new chunk. Appending to history buffer...`, 'success');
+            addConsoleLog(`[Ingested Live sub-logs (Sandbox)]: Generated new chunk. Appending to history buffer...`, 'success');
           } else {
             addConsoleLog(`⚠️ Ingestion error: Failed to connect to stream at ${liveLogUrl} (${e.message})`, 'warning');
             setIsPolling(false);
@@ -2736,7 +2736,7 @@ export default function App() {
                         mdText += `- **Run ID**: ${runId}\n`;
                         mdText += `- **Generated**: ${timestampText}\n`;
                         mdText += `- **Log Recency**: ${recency}\n`;
-                        mdText += `- **Total Logs Analyzed**: ${totalLogs}\n`;
+                        mdText += `- **Total Sub-logs Analyzed**: ${totalLogs}\n`;
                         mdText += `- **System Threat Status**: **${finalReport.status.toUpperCase()}**\n\n`;
                         mdText += `## Executive Summary\n${finalReport.summary.replace(/###/g, '')}\n\n`;
                         mdText += `## Detailed Findings\n`;
@@ -2804,7 +2804,7 @@ export default function App() {
                                 reportText += `Run ID:       ${runId}\n`;
                                 reportText += `Generated:    ${timestampText}\n`;
                                 reportText += `Log Recency:  ${recency}\n`;
-                                reportText += `Total Logs:   ${totalLogs}\n`;
+                                reportText += `Total Sub-logs:   ${totalLogs}\n`;
                                 reportText += `================================================================================\n`;
                                 reportText += `SYSTEM THREAT STATUS: ${finalReport?.status?.toUpperCase() || 'UNKNOWN'}\n`;
                                 reportText += `================================================================================\n\n`;
@@ -3072,7 +3072,7 @@ export default function App() {
                   </div>
 
                   <div>
-                    <label className="block text-xs font-semibold text-slate-400 mb-1.5 uppercase">Rate (logs/s)</label>
+                    <label className="block text-xs font-semibold text-slate-400 mb-1.5 uppercase">Rate (sub-logs/s)</label>
                     <input 
                       type="number"
                       min={1}
@@ -3149,12 +3149,12 @@ export default function App() {
             {/* Stats Dashboard */}
             <div className="grid grid-cols-4 gap-4">
               <div className="p-4 rounded-xl bg-slate-900/60 border border-slate-800 flex flex-col">
-                <span className="text-[10px] text-slate-500 uppercase font-semibold">Logs Generated</span>
+                <span className="text-[10px] text-slate-500 uppercase font-semibold">Sub-logs Generated</span>
                 <span className="text-xl font-bold text-indigo-400 mt-1">{simulatedCount.toLocaleString()}</span>
               </div>
               <div className="p-4 rounded-xl bg-slate-900/60 border border-slate-800 flex flex-col">
                 <span className="text-[10px] text-slate-500 uppercase font-semibold">Rate Status</span>
-                <span className="text-xl font-bold text-emerald-400 mt-1">{simRate} / sec</span>
+                <span className="text-xl font-bold text-emerald-400 mt-1">{simRate} sub-logs / sec</span>
               </div>
               <div className="p-4 rounded-xl bg-slate-900/60 border border-slate-800 flex flex-col">
                 <span className="text-[10px] text-slate-500 uppercase font-semibold">Simulated Anomalies</span>
