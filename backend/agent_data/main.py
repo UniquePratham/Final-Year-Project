@@ -330,45 +330,108 @@ def parse_nginx(raw_data: str) -> List[NormalizedLog]:
 
 
 def parse_json_logs(raw_data: str) -> List[NormalizedLog]:
-    """Parse newline-delimited JSON log entries."""
+    """Parse newline-delimited or array-wrapped JSON log entries."""
     normalized: List[NormalizedLog] = []
-    lines = raw_data.strip().splitlines()
-    for line in lines:
-        line = line.strip()
-        if not line:
+    
+    # Try to load as a single JSON array first (e.g. pretty-printed JSON files)
+    try:
+        parsed = json.loads(raw_data.strip())
+        if isinstance(parsed, list):
+            entries = parsed
+        else:
+            entries = [parsed]
+    except Exception:
+        # Fallback to newline-delimited JSON
+        entries = []
+        lines = raw_data.strip().splitlines()
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                entries.append(json.loads(line))
+            except Exception:
+                # Add individual raw line as fallback text log
+                normalized.append(NormalizedLog(
+                    timestamp=datetime.utcnow(),
+                    level=detect_log_level(line),
+                    message=line,
+                    raw=line
+                ))
+
+    # Check if entries wraps raw log dumps containing multi-line strings
+    log_dump_headers = (
+        "generated_log_line", "log_line", "log", "raw_log",
+        "message", "msg", "log_entry", "raw",
+    )
+    is_log_dump = False
+    dump_col = None
+    if entries and isinstance(entries[0], dict):
+        for col in log_dump_headers:
+            if col in entries[0]:
+                val = entries[0][col]
+                if isinstance(val, str) and ("\n" in val or "\\n" in val):
+                    is_log_dump = True
+                    dump_col = col
+                    break
+
+    if is_log_dump:
+        unwrapped: List[str] = []
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            cell = entry.get(dump_col, "")
+            if cell:
+                cell_clean = cell.replace("\\n", "\n")
+                for line in cell_clean.strip().splitlines():
+                    line_clean = line.strip().strip('"').strip("'").strip()
+                    if line_clean:
+                        unwrapped.append(line_clean)
+        if unwrapped:
+            joined = "\n".join(unwrapped)
+            inner_fmt = auto_detect_format(joined)
+            if inner_fmt == "NGINX":
+                return parse_nginx(joined)
+            if inner_fmt == "JSON":
+                return parse_txt_logs(joined)
+            return parse_syslog(joined)
+        return normalized
+
+    # Process standard entries
+    def get_any(d: dict, keys: List[str]) -> Optional[Any]:
+        for k in keys:
+            if k in d:
+                return d[k]
+        return None
+
+    for data in entries:
+        if not isinstance(data, dict):
             continue
         try:
-            data = json.loads(line)
-            
-            # Key variations helper
-            def get_any(keys: List[str]) -> Optional[Any]:
-                for k in keys:
-                    if k in data:
-                        return data[k]
-                return None
-                
-            ts_val = get_any(["timestamp", "time", "@timestamp", "Timestamp", "Time", "date", "Date"])
+            ts_val = get_any(data, ["timestamp", "time", "@timestamp", "Timestamp", "Time", "date", "Date"])
             ts = parse_timestamp(str(ts_val)) if ts_val else datetime.utcnow()
 
-            message = get_any(["message", "msg", "Message", "Msg", "log"]) or str(data)
+            message = get_any(data, ["message", "msg", "Message", "Msg", "log", "raw"]) or str(data)
+            level = get_any(data, ["level", "status", "Level", "severity", "Severity"]) or detect_log_level(message)
 
             normalized.append(NormalizedLog(
                 timestamp=ts,
-                level=get_any(["level", "status", "Level", "severity", "Severity"]) or detect_log_level(message),
-                source_ip=get_any(["source_ip", "ip", "client_ip", "clientIp", "SourceIP", "IP", "sourceAddress", "SourceAddress"]),
-                user=get_any(["user", "username", "userName", "User", "account", "AccountName"]),
-                service=get_any(["service", "app", "appName", "Service", "component", "process"]),
+                level=str(level),
+                source_ip=get_any(data, ["source_ip", "ip", "client_ip", "clientIp", "SourceIP", "IP", "sourceAddress", "SourceAddress"]),
+                user=get_any(data, ["user", "username", "userName", "User", "account", "AccountName"]),
+                service=get_any(data, ["service", "app", "appName", "Service", "component", "process"]),
                 message=message,
-                raw=line,
+                raw=json.dumps(data),
                 metadata=data
             ))
         except Exception:
             normalized.append(NormalizedLog(
                 timestamp=datetime.utcnow(),
-                level=detect_log_level(line),
-                message=line,
-                raw=line
+                level=detect_log_level(str(data)),
+                message=str(data),
+                raw=json.dumps(data)
             ))
+            
     return normalized
 
 

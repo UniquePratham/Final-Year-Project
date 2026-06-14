@@ -338,3 +338,38 @@ def test_historical_time_window_filtering():
     # The 11:59:00 and 12:00:00 logs should pass, but 11:50:00 should be filtered
     assert len(data["logs_normalized"]) == 2
 
+
+def test_process_data_json_array_dump():
+    intent_payload = {
+        "intent_class": "Security",
+        "entities": {},
+        "conditions": {},
+        "raw_prompt": "Show all logs"
+    }
+
+    # JSON array with raw multi-line strings (like the user's ddos_simulated_logs.json)
+    json_array_raw = (
+        '[\n'
+        '  {\n'
+        '    "id": 0,\n'
+        '    "raw": "Jun 12 15:45:20 myhost sshd[1234]: Failed password for root from 185.220.101.44\\nJun 12 15:45:21 myhost sshd[1234]: Failed password for admin from 91.200.12.33"\n'
+        '  }\n'
+        ']'
+    )
+
+    payload = {
+        "intent": intent_payload,
+        "logs_raw": json_array_raw,
+        "log_format": "JSON"
+    }
+
+    response = client.post("/process-data", json=payload)
+    assert response.status_code == 200
+    data = response.json()
+
+    assert len(data["logs_normalized"]) == 2
+    assert data["metrics"]["total_records"] == 2
+    assert data["logs_normalized"][0]["source_ip"] == "185.220.101.44"
+    assert data["logs_normalized"][1]["source_ip"] == "91.200.12.33"
+
+

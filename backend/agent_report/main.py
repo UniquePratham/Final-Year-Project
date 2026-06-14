@@ -69,6 +69,9 @@ async def generate_report(request: ReportRequest):
         status = "Bad"
     elif severity == "MEDIUM":
         status = "Warning"
+    elif severity in ("LOW", "INFO"):
+        if request.mitigation_actions or request.analysis_result.anomalies:
+            status = "Warning"
 
     # Build affected_resources from metrics and anomalies
     affected_resources = []
@@ -146,6 +149,8 @@ async def generate_report(request: ReportRequest):
         if severity in ("CRITICAL", "HIGH") and llm_status == "Good":
             json_data["status"] = "Bad"
         elif severity == "MEDIUM" and llm_status == "Good":
+            json_data["status"] = "Warning"
+        elif severity in ("LOW", "INFO") and llm_status == "Good" and (request.mitigation_actions or request.analysis_result.anomalies):
             json_data["status"] = "Warning"
 
         # Merge affected_resources
