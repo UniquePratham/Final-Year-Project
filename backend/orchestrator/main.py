@@ -261,6 +261,15 @@ async def login(req: LoginRequest):
         raise HTTPException(status_code=401, detail="Invalid credentials.")
     return {"message": "Success", "username": req.username, "email": user["email"], "token": f"token_{req.username}"}
 
+@app.get("/auth/profile")
+def get_user_profile(username: str):
+    if username == "admin":
+        return {"username": "admin", "email": "admin@sentinelforge.ai"}
+    user = db_get_user(username)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    return {"username": user["username"], "email": user["email"]}
+
 # Endpoint base URLs mapping (allow overriding via env vars for Docker Compose integration)
 INTENT_URL = get_config("INTENT_SERVICE_URL", "http://localhost:8001")
 DATA_URL = get_config("DATA_SERVICE_URL", "http://localhost:8002")

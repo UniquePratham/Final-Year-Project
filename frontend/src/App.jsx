@@ -1063,6 +1063,23 @@ export default function App() {
       if (storedEmail) {
         setUserEmail(storedEmail);
       }
+      
+      const fetchProfile = async () => {
+        try {
+          const cleanApiUrl = apiUrl.replace(/\/+$/, "");
+          const response = await fetch(`${cleanApiUrl}/auth/profile?username=${encodeURIComponent(storedUser)}`);
+          if (response.ok) {
+            const data = await response.json();
+            if (data.email) {
+              localStorage.setItem('user_email', data.email);
+              setUserEmail(data.email);
+            }
+          }
+        } catch (err) {
+          console.warn("Failed to fetch user profile:", err);
+        }
+      };
+      fetchProfile();
     }
   }, []);
 
