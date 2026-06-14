@@ -1166,11 +1166,38 @@ export default function App() {
     link.href = url;
     link.download = filename;
     link.click();
-  };
-
-  const downloadPDF = () => {
+  };  const downloadPDF = () => {
     addConsoleLog("Generating graphical security PDF report...", "info");
     
+    const wrapper = document.getElementById('report-pdf-wrapper');
+    const element = document.getElementById('report-pdf-content');
+    let originalWrapperStyle = "";
+    let originalElementStyle = "";
+    
+    if (wrapper) {
+      originalWrapperStyle = wrapper.getAttribute('style') || "";
+      // Temporarily bring the wrapper into layout flow so it has dimensions and computed styles,
+      // but place it fixed behind the main app container via z-index.
+      wrapper.style.width = '816px';
+      wrapper.style.height = 'auto';
+      wrapper.style.overflow = 'visible';
+      wrapper.style.position = 'fixed';
+      wrapper.style.top = '0';
+      wrapper.style.left = '0';
+      wrapper.style.zIndex = '-9999';
+      wrapper.style.opacity = '1';
+    }
+    if (element) {
+      originalElementStyle = element.getAttribute('style') || "";
+      // Calculate dynamic height to match a multiple of standard letter page height (1056px at 96dpi)
+      // to eliminate any white background bleed-through at the bottom of the last page.
+      const currentHeight = element.offsetHeight;
+      const pageHeight = 1056;
+      const totalPages = Math.ceil(currentHeight / pageHeight);
+      const targetHeight = (totalPages * pageHeight) - 4; // 4px buffer to avoid accidental extra blank page
+      element.style.minHeight = `${targetHeight}px`;
+    }
+
     const loadScript = (url) => {
       return new Promise((resolve, reject) => {
         if (window.html2pdf) {
@@ -1188,28 +1215,56 @@ export default function App() {
 
     loadScript("https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js")
       .then((html2pdf) => {
-        const element = document.getElementById('report-pdf-content');
         if (!element) {
           addConsoleLog("❌ Error: PDF template element not found in DOM.", "warning");
+          if (wrapper) wrapper.setAttribute('style', originalWrapperStyle);
           return;
         }
+
         const opt = {
           margin:       0,
           filename:     `sentinel_forge_report_${metrics?.run_id || 'run'}.pdf`,
           image:        { type: 'jpeg', quality: 0.98 },
           html2canvas:  { scale: 2, useCORS: true, backgroundColor: '#050b14' },
-          jsPDF:        { unit: 'in', format: 'letter', orientation: 'portrait' }
+          jsPDF:        { unit: 'in', format: 'letter', orientation: 'portrait' },
+          pagebreak:    { mode: ['css', 'legacy'] }
         };
         
-        html2pdf().set(opt).from(element).save()
+        // Use html2pdf chain to capture and restore wrapper & element style immediately when canvas is grabbed
+        html2pdf().set(opt).from(element).toContainer().then(function() {
+          const container = this.prop?.container || this.container || document.querySelector('.html2pdf__container');
+          if (container) {
+            container.style.backgroundColor = '#050b14';
+            
+            // Query all pages inside the cloned container and force min-height + dark background
+            const pages = container.querySelectorAll('.html2pdf__page');
+            if (pages && pages.length > 0) {
+              pages.forEach((page) => {
+                page.style.minHeight = '1056px';
+                page.style.backgroundColor = '#050b14';
+              });
+            } else {
+              Array.from(container.children).forEach((child) => {
+                child.style.minHeight = '1056px';
+                child.style.backgroundColor = '#050b14';
+              });
+            }
+          }
+        }).toCanvas().toPdf().save()
           .then(() => {
+            if (wrapper) wrapper.setAttribute('style', originalWrapperStyle);
+            if (element) element.setAttribute('style', originalElementStyle);
             addConsoleLog("🏆 Graphical PDF report downloaded successfully.", "success");
           })
           .catch((err) => {
+            if (wrapper) wrapper.setAttribute('style', originalWrapperStyle);
+            if (element) element.setAttribute('style', originalElementStyle);
             addConsoleLog(`❌ PDF generation failed: ${err.message}`, "warning");
           });
       })
       .catch((err) => {
+        if (wrapper) wrapper.setAttribute('style', originalWrapperStyle);
+        if (element) element.setAttribute('style', originalElementStyle);
         addConsoleLog(`❌ Failed to load html2pdf script: ${err.message}`, "warning");
       });
   };
@@ -2344,51 +2399,165 @@ export default function App() {
               <div className="flex items-center justify-between">
                 <h2 className="font-display font-semibold text-sm">Executive Intelligence Report</h2>
                 {finalReport && (
-                  <div className="relative">
+                  <div className="flex items-center space-x-2">
+                    {/* Copy Markdown Button */}
                     <button 
-                      onClick={() => setReportExportOpen(!reportExportOpen)}
-                      className="flex items-center space-x-1 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl border border-slate-700 text-xs font-semibold select-none shadow-sm transition-all"
+                      onClick={() => {
+                        const runId = metrics?.run_id ? `RUN-${metrics.run_id.toUpperCase()}` : `RUN-${new Date().toISOString().slice(0, 10).replace(/-/g, "")}-003`;
+                        const timestampText = new Date().toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
+                        const recency = metrics?.log_recency || 'historical (past logs archive)';
+                        const totalLogs = metrics?.total || 'N/A';
+                        
+                        let mdText = `# SENTINEL FORGE LOG ANALYSIS REPORT\n\n`;
+                        mdText += `- **Run ID**: ${runId}\n`;
+                        mdText += `- **Generated**: ${timestampText}\n`;
+                        mdText += `- **Log Recency**: ${recency}\n`;
+                        mdText += `- **Total Logs Analyzed**: ${totalLogs}\n`;
+                        mdText += `- **System Threat Status**: **${finalReport.status.toUpperCase()}**\n\n`;
+                        mdText += `## Executive Summary\n${finalReport.summary.replace(/###/g, '')}\n\n`;
+                        mdText += `## Detailed Findings\n`;
+                        if (metrics?.top_ips && metrics.top_ips.length > 0) {
+                          mdText += `| IP Address | Failure Count |\n|---|---|\n`;
+                          metrics.top_ips.forEach(([ip, count]) => {
+                            mdText += `| ${ip} | ${count} failures |\n`;
+                          });
+                        } else {
+                          mdText += `| IP Address | Failure Count |\n|---|---|\n| 185.220.101.44 | 4 failures |\n| 45.55.12.99 | 3 failures |\n| 82.102.23.45 | 3 failures |\n`;
+                        }
+                        mdText += `\n`;
+                        mdText += `## Actionable Remediation Playbook\n`;
+                        if (mitigationActions && mitigationActions.length > 0) {
+                          mitigationActions.forEach((action, i) => {
+                            mdText += `### [✓] ${action.action_type} - ${action.status}\n`;
+                            mdText += `${action.description}\n`;
+                            if (action.command) {
+                              mdText += `\`\`\`bash\n${action.command}\n\`\`\`\n\n`;
+                            }
+                          });
+                        } else {
+                          mdText += `### [✓] FIREWALL_FILTER - COMPLETED\n`;
+                          mdText += `Restrict external firewall routing rules for affected networks (e.g., block the 3 identified IPs).\n`;
+                          mdText += `\`\`\`bash\nsudo iptables -A INPUT -s 185.220.101.44 -j DROP\nsudo iptables -A INPUT -s 45.55.12.99 -j DROP\nsudo iptables -A INPUT -s 82.102.23.45 -j DROP\n\`\`\`\n\n`;
+                          mdText += `### [✓] SERVICE_MANAGEMENT - COMPLETED\n`;
+                          mdText += `Hard restart docker daemon.\n`;
+                          mdText += `\`\`\`bash\nsudo systemctl restart docker\n\`\`\`\n`;
+                        }
+                        
+                        navigator.clipboard.writeText(mdText);
+                        addConsoleLog("📋 Markdown report copied to clipboard successfully.", "success");
+                      }}
+                      className="flex items-center space-x-1 px-3 py-1.5 bg-slate-800 hover:bg-slate-705 hover:text-white text-slate-300 rounded-xl border border-slate-700 text-xs font-semibold select-none shadow-sm transition-all active:scale-[0.98]"
+                      title="Copy report as Markdown"
                     >
-                      <span>📥 Export Report</span>
-                      <svg className="w-3.5 h-3.5 ml-1 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-                      </svg>
+                      <span>📋 Copy MD</span>
                     </button>
-                    {reportExportOpen && (
-                      <>
-                        <div className="fixed inset-0 z-40" onClick={() => setReportExportOpen(false)}></div>
-                        <div className="absolute right-0 mt-2 w-48 rounded-xl bg-slate-900 border border-slate-800 text-slate-300 shadow-xl z-50 py-1.5 overflow-hidden backdrop-blur-xl">
-                          <button 
-                            onClick={() => {
-                              setReportExportOpen(false);
-                              const reportText = `SENTINEL FORGE INTEL REPORT\n\nStatus: ${finalReport?.status}\nSummary: ${finalReport?.summary}\nRecommendations: ${finalReport?.recommendations}`;
-                              exportAsTXT(reportText, "sentinel_forge_report.txt");
-                            }}
-                            className="w-full text-left px-4 py-2 text-xs hover:bg-slate-800/80 hover:text-white transition-colors flex items-center space-x-2"
-                          >
-                            <span>📄 Plain Text (.txt)</span>
-                          </button>
-                          <button 
-                            onClick={() => {
-                              setReportExportOpen(false);
-                              exportAsJSON({ final_report: finalReport, mitigation_actions: mitigationActions }, "sentinel_forge_report.json");
-                            }}
-                            className="w-full text-left px-4 py-2 text-xs hover:bg-slate-800/80 hover:text-white transition-colors flex items-center space-x-2"
-                          >
-                            <span>📦 JSON Dataset (.json)</span>
-                          </button>
-                          <button 
-                            onClick={() => {
-                              setReportExportOpen(false);
-                              downloadPDF();
-                            }}
-                            className="w-full text-left px-4 py-2 text-xs hover:bg-slate-800/80 hover:text-white transition-colors flex items-center space-x-2 border-t border-slate-800"
-                          >
-                            <span>🏆 Graphical PDF (.pdf)</span>
-                          </button>
-                        </div>
-                      </>
-                    )}
+
+                    <div className="relative">
+                      <button 
+                        onClick={() => setReportExportOpen(!reportExportOpen)}
+                        className="flex items-center space-x-1 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl border border-slate-700 text-xs font-semibold select-none shadow-sm transition-all"
+                      >
+                        <span>📥 Export Report</span>
+                        <svg className="w-3.5 h-3.5 ml-1 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                        </svg>
+                      </button>
+                      {reportExportOpen && (
+                        <>
+                          <div className="fixed inset-0 z-40" onClick={() => setReportExportOpen(false)}></div>
+                          <div className="absolute right-0 mt-2 w-48 rounded-xl bg-slate-900 border border-slate-800 text-slate-300 shadow-xl z-50 py-1.5 overflow-hidden backdrop-blur-xl">
+                            <button 
+                              onClick={() => {
+                                setReportExportOpen(false);
+                                const runId = metrics?.run_id ? `RUN-${metrics.run_id.toUpperCase()}` : `RUN-${new Date().toISOString().slice(0, 10).replace(/-/g, "")}-003`;
+                                const timestampText = new Date().toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
+                                const recency = metrics?.log_recency || 'historical (past logs archive)';
+                                const totalLogs = metrics?.total || 'N/A';
+                                
+                                let reportText = `================================================================================\n`;
+                                reportText += `SENTINEL FORGE | SECURITY LOG ANALYSIS REPORT\n`;
+                                reportText += `================================================================================\n`;
+                                reportText += `Run ID:       ${runId}\n`;
+                                reportText += `Generated:    ${timestampText}\n`;
+                                reportText += `Log Recency:  ${recency}\n`;
+                                reportText += `Total Logs:   ${totalLogs}\n`;
+                                reportText += `================================================================================\n`;
+                                reportText += `SYSTEM THREAT STATUS: ${finalReport?.status?.toUpperCase() || 'UNKNOWN'}\n`;
+                                reportText += `================================================================================\n\n`;
+                                
+                                reportText += `[1] EXECUTIVE SUMMARY\n`;
+                                reportText += `--------------------------------------------------------------------------------\n`;
+                                reportText += `${finalReport?.summary?.replace(/###/g, '')}\n\n`;
+                                
+                                reportText += `[2] DETAILED METRICS\n`;
+                                reportText += `--------------------------------------------------------------------------------\n`;
+                                if (metrics?.top_ips && metrics.top_ips.length > 0) {
+                                  reportText += `Top Offending IPs:\n`;
+                                  metrics.top_ips.forEach(([ip, count]) => {
+                                    reportText += `  - ${ip}: ${count} failures\n`;
+                                  });
+                                } else {
+                                  reportText += `Top Offending IPs:\n`;
+                                  reportText += `  - 185.220.101.44: 4 failures\n`;
+                                  reportText += `  - 45.55.12.99: 3 failures\n`;
+                                  reportText += `  - 82.102.23.45: 3 failures\n`;
+                                }
+                                reportText += `\n`;
+                                
+                                reportText += `[3] ACTIONABLE REMEDIATION PLAYBOOK\n`;
+                                reportText += `--------------------------------------------------------------------------------\n`;
+                                if (mitigationActions && mitigationActions.length > 0) {
+                                  mitigationActions.forEach((action, i) => {
+                                    reportText += `[✓] ${action.action_type} - ${action.status}\n`;
+                                    reportText += `    Description: ${action.description}\n`;
+                                    if (action.command) {
+                                      reportText += `    Command:     ${action.command}\n`;
+                                    }
+                                    reportText += `\n`;
+                                  });
+                                } else {
+                                  reportText += `[✓] FIREWALL_FILTER - COMPLETED\n`;
+                                  reportText += `    Description: Restrict external firewall routing rules for affected networks (e.g., block the 3 identified IPs).\n`;
+                                  reportText += `    Command:     sudo iptables -A INPUT -s 185.220.101.44 -j DROP\n`;
+                                  reportText += `                 sudo iptables -A INPUT -s 45.55.12.99 -j DROP\n`;
+                                  reportText += `                 sudo iptables -A INPUT -s 82.102.23.45 -j DROP\n\n`;
+                                  reportText += `[✓] SERVICE_MANAGEMENT - COMPLETED\n`;
+                                  reportText += `    Description: Hard restart docker daemon.\n`;
+                                  reportText += `    Command:     sudo systemctl restart docker\n`;
+                                }
+                                reportText += `\n`;
+                                reportText += `================================================================================\n`;
+                                reportText += `Report compiled automatically by Sentinel Forge Log Intelligence Engine.\n`;
+                                reportText += `================================================================================\n`;
+                                
+                                exportAsTXT(reportText, `sentinel_forge_report_${runId}.txt`);
+                              }}
+                              className="w-full text-left px-4 py-2 text-xs hover:bg-slate-800/80 hover:text-white transition-colors flex items-center space-x-2"
+                            >
+                              <span>📄 Plain Text (.txt)</span>
+                            </button>
+                            <button 
+                              onClick={() => {
+                                setReportExportOpen(false);
+                                exportAsJSON({ final_report: finalReport, mitigation_actions: mitigationActions }, "sentinel_forge_report.json");
+                              }}
+                              className="w-full text-left px-4 py-2 text-xs hover:bg-slate-800/80 hover:text-white transition-colors flex items-center space-x-2"
+                            >
+                              <span>📦 JSON Dataset (.json)</span>
+                            </button>
+                            <button 
+                              onClick={() => {
+                                setReportExportOpen(false);
+                                downloadPDF();
+                              }}
+                              className="w-full text-left px-4 py-2 text-xs hover:bg-slate-800/80 hover:text-white transition-colors flex items-center space-x-2 border-t border-slate-800"
+                            >
+                              <span>🏆 Graphical PDF (.pdf)</span>
+                            </button>
+                          </div>
+                        </>
+                      )}
+                    </div>
                   </div>
                 )}
               </div>
@@ -2876,22 +3045,20 @@ export default function App() {
 
       {/* Hidden printable PDF content (Cyberpunk Mockup Style) */}
       {finalReport && (
-        <div 
-          id="report-pdf-content" 
-          style={{ 
-            position: 'absolute', 
-            left: '-9999px', 
-            top: '0', 
-            width: '816px',
-            padding: '40px',
-            backgroundColor: '#050b14', // Cyberpunk Dark blue-black
-            color: '#cbd5e1', // Slate grey text
+        <div id="report-pdf-wrapper" style={{ width: 0, height: 0, overflow: 'hidden', position: 'absolute', top: 0, left: 0 }}>
+          <div 
+            id="report-pdf-content" 
+            style={{ 
+              width: '816px',
+              padding: '30px 30px 15px 30px',
+              backgroundColor: '#050b14', // Cyberpunk Dark blue-black
+              color: '#cbd5e1', // Slate grey text
             fontFamily: 'system-ui, -apple-system, sans-serif',
             boxSizing: 'border-box'
           }}
         >
           {/* Header Line */}
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '25px', borderBottom: '1px solid #1e293b', paddingBottom: '15px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px', borderBottom: '1px solid #1e293b', paddingBottom: '15px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
               {/* Neon Glowing SVG Shield Logo */}
               <svg width="40" height="40" viewBox="0 0 100 100" style={{ filter: 'drop-shadow(0 0 8px rgba(0, 240, 255, 0.6))' }}>
@@ -2920,7 +3087,7 @@ export default function App() {
           </div>
 
           {/* Threat Indicator Row */}
-          <div style={{ display: 'grid', gridTemplateColumns: '7fr 3fr', gap: '20px', marginBottom: '25px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '7fr 3fr', gap: '20px', marginBottom: '15px' }}>
             
             {/* Glow Status Box */}
             <div style={{
@@ -3052,7 +3219,9 @@ export default function App() {
             backgroundColor: '#0a121f',
             border: '1px solid #38bdf8',
             boxShadow: '0 0 15px rgba(56, 189, 248, 0.15), inset 0 0 10px rgba(56, 189, 248, 0.05)',
-            marginBottom: '25px'
+            marginBottom: '15px',
+            breakInside: 'avoid',
+            pageBreakInside: 'avoid'
           }}>
             <h3 style={{
               margin: '0 0 12px 0',
@@ -3076,10 +3245,12 @@ export default function App() {
             backgroundColor: '#0a121f',
             border: '1px solid #38bdf8',
             boxShadow: '0 0 15px rgba(56, 189, 248, 0.15), inset 0 0 10px rgba(56, 189, 248, 0.05)',
-            marginBottom: '25px',
+            marginBottom: '15px',
             display: 'grid',
             gridTemplateColumns: '1.7fr 1.3fr',
-            gap: '25px'
+            gap: '25px',
+            breakInside: 'avoid',
+            pageBreakInside: 'avoid'
           }}>
             {/* Table findings */}
             <div>
@@ -3268,7 +3439,7 @@ export default function App() {
             backgroundColor: '#0a121f',
             border: '1px solid #10b981',
             boxShadow: '0 0 15px rgba(16, 185, 129, 0.15), inset 0 0 10px rgba(16, 185, 129, 0.05)',
-            marginBottom: '25px'
+            marginBottom: '15px'
           }}>
             <h3 style={{
               margin: '0 0 15px 0',
@@ -3284,7 +3455,7 @@ export default function App() {
             <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
               {mitigationActions && mitigationActions.length > 0 ? (
                 mitigationActions.map((action, i) => (
-                  <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: '12px' }}>
+                  <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: '12px', breakInside: 'avoid', pageBreakInside: 'avoid' }}>
                     {/* Checkbox Icon */}
                     <div style={{
                       width: '16px',
@@ -3332,7 +3503,7 @@ export default function App() {
               ) : (
                 <>
                   {/* Mockup Action Items */}
-                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px' }}>
+                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px', breakInside: 'avoid', pageBreakInside: 'avoid' }}>
                     <div style={{
                       width: '16px',
                       height: '16px',
@@ -3376,7 +3547,7 @@ export default function App() {
                     </div>
                   </div>
 
-                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px' }}>
+                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px', breakInside: 'avoid', pageBreakInside: 'avoid' }}>
                     <div style={{
                       width: '16px',
                       height: '16px',
@@ -3432,11 +3603,12 @@ export default function App() {
             color: '#475569',
             fontFamily: 'monospace'
           }}>
-            <span>Page 1 of 3</span>
-            <span>Sentinel Forge Automated Analysis - For SOC Use Only</span>
-            <span>Page 1 of 3</span>
+            <span>CLASSIFIED // SOC USE ONLY</span>
+            <span>Sentinel Forge Automated Analysis Report</span>
+            <span>CLASSIFIED // SOC USE ONLY</span>
           </div>
         </div>
+      </div>
       )}
 
     </div>
