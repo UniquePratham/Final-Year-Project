@@ -1112,11 +1112,6 @@ export default function App() {
             if (simScenario !== "Normal System Activity") {
               setSimulatedAnomalies(prev => prev + Math.ceil(count * 0.15));
             }
-            
-            // If in ONLINE mode and polling the simulator url, update the main logs area
-            if (systemMode === "ONLINE" && isPolling && liveLogUrl.includes("/simulator/logs")) {
-              setLogs(rawText);
-            }
           } else {
             throw new Error(`Server status ${response.status}`);
           }
@@ -1137,10 +1132,6 @@ export default function App() {
           
           if (simScenario !== "Normal System Activity") {
             setSimulatedAnomalies(prev => prev + Math.ceil(count * 0.15));
-          }
-          
-          if (systemMode === "ONLINE" && isPolling && liveLogUrl.includes("/simulator/logs")) {
-            setLogs(rawText);
           }
         }
       };

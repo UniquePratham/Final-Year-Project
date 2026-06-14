@@ -107,6 +107,10 @@ def run_rule_engine(intent: IntentObject, metrics: Dict[str, Any], logs: List[No
         r_lower = str(intent.entities.get("resource")).lower()
         if any(kw in r_lower for kw in ("ddos", "dos", "denial of service", "traffic spike", "rate limit")):
             is_ddos_query = True
+            
+    bot_logs_count = sum(1 for l in logs if l.raw and any(bot_sig in l.raw for bot_sig in ("(Bot)", "Mozilla/5.0 (Bot)")))
+    if bot_logs_count >= 5:
+        is_ddos_query = True
 
     if is_ddos_query:
         threshold = intent.conditions.get("threshold")
