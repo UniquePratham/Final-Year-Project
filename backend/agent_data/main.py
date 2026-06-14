@@ -194,24 +194,38 @@ def parse_syslog(raw_data: str) -> List[NormalizedLog]:
 
             # Extract source IP from message body
             source_ip = None
-            # Prefer explicit IP= field over first occurrence in text
-            ip_field = re.search(r'\bIP=(\d+\.\d+\.\d+\.\d+)', message)
-            if ip_field:
-                source_ip = ip_field.group(1)
-            else:
+            ip_patterns = [
+                r'\bIP=(\d+\.\d+\.\d+\.\d+)',
+                r'\bSourceAddress=(\d+\.\d+\.\d+\.\d+)',
+                r'Source\s+Address:\s*(\d+\.\d+\.\d+\.\d+)',
+                r'Source\s+Network\s+Address:\s*(\d+\.\d+\.\d+\.\d+)'
+            ]
+            for pattern in ip_patterns:
+                ip_match = re.search(pattern, message, re.IGNORECASE)
+                if ip_match:
+                    source_ip = ip_match.group(1)
+                    break
+            
+            if not source_ip:
                 ip_match = IP_REGEX.search(message) or IP_REGEX.search(host)
                 if ip_match:
                     source_ip = ip_match.group(0)
 
-            # Extract user from User= field or "for <user>" pattern
+            # Extract user from User=, AccountName=, TargetUserName=, Account Name: patterns
             user = None
-            user_field = re.search(r'\bUser=([a-zA-Z0-9_\-\.]+)', message, re.IGNORECASE)
-            if user_field:
-                user = user_field.group(1)
-            else:
-                user_match = re.search(r'(?:user|for)\s+([a-zA-Z0-9_\-\.]+)', message, re.IGNORECASE)
+            user_patterns = [
+                r'\bUser=([a-zA-Z0-9_\-\.]+)',
+                r'\bAccountName=([a-zA-Z0-9_\-\.]+)',
+                r'\bTargetUserName=([a-zA-Z0-9_\-\.]+)',
+                r'Account\s+Name:\s*([a-zA-Z0-9_\-\.]+)',
+                r'Target\s+User\s+Name:\s*([a-zA-Z0-9_\-\.]+)',
+                r'(?:user|for)\s+([a-zA-Z0-9_\-\.]+)'
+            ]
+            for pattern in user_patterns:
+                user_match = re.search(pattern, message, re.IGNORECASE)
                 if user_match:
                     user = user_match.group(1)
+                    break
 
             # Detect service from the regex or from the message body
             service = gd.get("service") or "syslog"
@@ -228,13 +242,36 @@ def parse_syslog(raw_data: str) -> List[NormalizedLog]:
         else:
             # Fallback: still extract what we can from an unparseable line
             source_ip = None
-            ip_match = IP_REGEX.search(line)
-            if ip_match:
-                source_ip = ip_match.group(0)
+            ip_patterns = [
+                r'\bIP=(\d+\.\d+\.\d+\.\d+)',
+                r'\bSourceAddress=(\d+\.\d+\.\d+\.\d+)',
+                r'Source\s+Address:\s*(\d+\.\d+\.\d+\.\d+)',
+                r'Source\s+Network\s+Address:\s*(\d+\.\d+\.\d+\.\d+)'
+            ]
+            for pattern in ip_patterns:
+                ip_match = re.search(pattern, line, re.IGNORECASE)
+                if ip_match:
+                    source_ip = ip_match.group(1)
+                    break
+            if not source_ip:
+                ip_match = IP_REGEX.search(line)
+                if ip_match:
+                    source_ip = ip_match.group(0)
+
             user = None
-            user_match = re.search(r'\bUser=([a-zA-Z0-9_\-\.]+)', line, re.IGNORECASE)
-            if user_match:
-                user = user_match.group(1)
+            user_patterns = [
+                r'\bUser=([a-zA-Z0-9_\-\.]+)',
+                r'\bAccountName=([a-zA-Z0-9_\-\.]+)',
+                r'\bTargetUserName=([a-zA-Z0-9_\-\.]+)',
+                r'Account\s+Name:\s*([a-zA-Z0-9_\-\.]+)',
+                r'Target\s+User\s+Name:\s*([a-zA-Z0-9_\-\.]+)',
+                r'(?:user|for)\s+([a-zA-Z0-9_\-\.]+)'
+            ]
+            for pattern in user_patterns:
+                user_match = re.search(pattern, line, re.IGNORECASE)
+                if user_match:
+                    user = user_match.group(1)
+                    break
 
             normalized.append(NormalizedLog(
                 timestamp=datetime.utcnow(),
@@ -268,7 +305,7 @@ def parse_nginx(raw_data: str) -> List[NormalizedLog]:
                 user = None
 
             # Determine level from HTTP status
-            if status >= 500:
+            if status >= 500 or status in (401, 403):
                 level = "ERROR"
             elif status >= 400:
                 level = "WARNING"
@@ -302,17 +339,25 @@ def parse_json_logs(raw_data: str) -> List[NormalizedLog]:
             continue
         try:
             data = json.loads(line)
-            ts_val = data.get("timestamp") or data.get("time") or data.get("@timestamp")
+            
+            # Key variations helper
+            def get_any(keys: List[str]) -> Optional[Any]:
+                for k in keys:
+                    if k in data:
+                        return data[k]
+                return None
+                
+            ts_val = get_any(["timestamp", "time", "@timestamp", "Timestamp", "Time", "date", "Date"])
             ts = parse_timestamp(str(ts_val)) if ts_val else datetime.utcnow()
 
-            message = data.get("message") or data.get("msg") or str(data)
+            message = get_any(["message", "msg", "Message", "Msg", "log"]) or str(data)
 
             normalized.append(NormalizedLog(
                 timestamp=ts,
-                level=data.get("level") or data.get("status") or detect_log_level(message),
-                source_ip=data.get("source_ip") or data.get("ip") or data.get("client_ip"),
-                user=data.get("user") or data.get("username"),
-                service=data.get("service") or data.get("app"),
+                level=get_any(["level", "status", "Level", "severity", "Severity"]) or detect_log_level(message),
+                source_ip=get_any(["source_ip", "ip", "client_ip", "clientIp", "SourceIP", "IP", "sourceAddress", "SourceAddress"]),
+                user=get_any(["user", "username", "userName", "User", "account", "AccountName"]),
+                service=get_any(["service", "app", "appName", "Service", "component", "process"]),
                 message=message,
                 raw=line,
                 metadata=data
@@ -334,6 +379,10 @@ def parse_csv_logs(raw_data: str) -> List[NormalizedLog]:
     reader = csv.DictReader(lines)
     fieldnames = reader.fieldnames or []
 
+    # Helper to normalize keys
+    def normalize_key(k: str) -> str:
+        return k.strip().lower().replace(" ", "_") if k else ""
+
     # Detect single-column CSV that wraps raw log lines
     log_dump_headers = (
         "generated_log_line", "log_line", "log", "raw_log",
@@ -341,7 +390,7 @@ def parse_csv_logs(raw_data: str) -> List[NormalizedLog]:
     )
     is_log_dump = (
         len(fieldnames) == 1
-        and fieldnames[0].lower().replace(" ", "_") in log_dump_headers
+        and normalize_key(fieldnames[0]) in log_dump_headers
     )
 
     if is_log_dump:
@@ -368,18 +417,20 @@ def parse_csv_logs(raw_data: str) -> List[NormalizedLog]:
 
     # Standard multi-column CSV
     for row in reader:
-        ts_val = row.get("timestamp") or row.get("time") or row.get("date")
+        norm_row = {normalize_key(k): v for k, v in row.items() if k}
+        
+        ts_val = norm_row.get("timestamp") or norm_row.get("time") or norm_row.get("date")
         ts = parse_timestamp(str(ts_val)) if ts_val else datetime.utcnow()
 
-        message = row.get("message") or row.get("msg") or ", ".join([f"{k}={v}" for k, v in row.items()])
-        level = row.get("level") or detect_log_level(message)
+        message = norm_row.get("message") or norm_row.get("msg") or ", ".join([f"{k}={v}" for k, v in norm_row.items()])
+        level = norm_row.get("level") or detect_log_level(message)
 
         normalized.append(NormalizedLog(
             timestamp=ts,
             level=level,
-            source_ip=row.get("source_ip") or row.get("ip"),
-            user=row.get("user") or row.get("username"),
-            service=row.get("service") or "csv_import",
+            source_ip=norm_row.get("source_ip") or norm_row.get("ip") or norm_row.get("client_ip") or norm_row.get("source_address"),
+            user=norm_row.get("user") or norm_row.get("username") or norm_row.get("account_name"),
+            service=norm_row.get("service") or norm_row.get("app") or "csv_import",
             message=message,
             raw=json.dumps(row)
         ))
@@ -392,16 +443,18 @@ def parse_xml_logs(raw_data: str) -> List[NormalizedLog]:
     try:
         root = ET.fromstring(f"<root>{raw_data}</root>")
         for log_entry in root:
-            data = {child.tag: child.text for child in log_entry}
-            ts_val = data.get("timestamp") or data.get("time")
+            data = {child.tag.strip(): child.text for child in log_entry if child.tag}
+            norm_data = {k.lower().replace("_", "").replace(" ", ""): v for k, v in data.items()}
+            
+            ts_val = norm_data.get("timestamp") or norm_data.get("time") or norm_data.get("date")
             ts = parse_timestamp(str(ts_val)) if ts_val else datetime.utcnow()
-            message = data.get("message") or data.get("msg") or str(data)
+            message = norm_data.get("message") or norm_data.get("msg") or norm_data.get("log") or str(data)
             normalized.append(NormalizedLog(
                 timestamp=ts,
-                level=data.get("level") or detect_log_level(message),
-                source_ip=data.get("source_ip") or data.get("ip"),
-                user=data.get("user") or data.get("username"),
-                service=data.get("service") or log_entry.tag,
+                level=norm_data.get("level") or norm_data.get("severity") or norm_data.get("status") or detect_log_level(message),
+                source_ip=norm_data.get("sourceip") or norm_data.get("ip") or norm_data.get("clientip") or norm_data.get("sourceaddress"),
+                user=norm_data.get("user") or norm_data.get("username") or norm_data.get("accountname"),
+                service=norm_data.get("service") or norm_data.get("app") or log_entry.tag,
                 message=message,
                 raw=ET.tostring(log_entry, encoding="utf-8").decode("utf-8")
             ))

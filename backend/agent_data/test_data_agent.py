@@ -150,6 +150,8 @@ def test_process_data_nginx():
     nginx_raw = (
         '192.168.1.50 - - [13/Jun/2026:22:47:09 +0000] "GET /api/v1/users HTTP/1.1" 200 452 "-" "Mozilla/5.0"\n'
         '192.168.1.51 - - [13/Jun/2026:22:47:10 +0000] "POST /api/v1/auth HTTP/1.1" 500 128 "-" "Mozilla/5.0"\n'
+        '192.168.1.52 - - [13/Jun/2026:22:47:11 +0000] "POST /api/v1/auth HTTP/1.1" 401 54 "-" "Mozilla/5.0"\n'
+        '192.168.1.53 - - [13/Jun/2026:22:47:12 +0000] "GET /non-existent HTTP/1.1" 404 15 "-" "Mozilla/5.0"\n'
     )
     
     payload = {
@@ -162,12 +164,18 @@ def test_process_data_nginx():
     assert response.status_code == 200
     data = response.json()
     
-    assert len(data["logs_normalized"]) == 2
-    assert data["metrics"]["total_records"] == 2
+    assert len(data["logs_normalized"]) == 4
+    assert data["metrics"]["total_records"] == 4
     assert data["logs_normalized"][0]["level"] == "INFO"
     assert data["logs_normalized"][0]["source_ip"] == "192.168.1.50"
     assert data["logs_normalized"][1]["level"] == "ERROR"  # status 500
     assert data["logs_normalized"][1]["source_ip"] == "192.168.1.51"
+    assert data["logs_normalized"][2]["level"] == "ERROR"  # status 401 (failed auth -> error)
+    assert data["logs_normalized"][2]["source_ip"] == "192.168.1.52"
+    assert data["logs_normalized"][3]["level"] == "WARNING"  # status 404 (client error -> warning)
+    assert data["logs_normalized"][3]["source_ip"] == "192.168.1.53"
+    assert data["metrics"]["error_count"] == 2
+    assert data["metrics"]["warning_count"] == 1
 
 
 def test_process_data_auto_detect():

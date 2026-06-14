@@ -255,11 +255,11 @@ async def login(req: LoginRequest):
     if not req.username or not req.password:
         raise HTTPException(status_code=400, detail="Missing username or password.")
     if req.username == "admin" and req.password == "admin":
-        return {"message": "Success", "username": "admin", "token": "token_admin"}
+        return {"message": "Success", "username": "admin", "email": "admin@sentinelforge.ai", "token": "token_admin"}
     user = db_get_user(req.username)
     if not user or not verify_password(req.password, user["password_hash"]):
         raise HTTPException(status_code=401, detail="Invalid credentials.")
-    return {"message": "Success", "username": req.username, "token": f"token_{req.username}"}
+    return {"message": "Success", "username": req.username, "email": user["email"], "token": f"token_{req.username}"}
 
 # Endpoint base URLs mapping (allow overriding via env vars for Docker Compose integration)
 INTENT_URL = get_config("INTENT_SERVICE_URL", "http://localhost:8001")

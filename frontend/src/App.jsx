@@ -499,8 +499,129 @@ const PROMPT_PRESETS = [
   "Analyze high latency or performance warning spikes in API gateway."
 ];
 
+const parseInlineMarkdown = (text) => {
+  if (typeof text !== 'string') return text;
+  const parts = [];
+  let currentIdx = 0;
+  const regex = /(\*\*(.*?)\*\*|`(.*?)`)/g;
+  let match;
+  while ((match = regex.exec(text)) !== null) {
+    const matchIdx = match.index;
+    if (matchIdx > currentIdx) {
+      parts.push(text.substring(currentIdx, matchIdx));
+    }
+    if (match[2] !== undefined) {
+      parts.push(<strong key={matchIdx} className="font-bold text-slate-100">{match[2]}</strong>);
+    } else if (match[3] !== undefined) {
+      parts.push(<code key={matchIdx} className="px-1.5 py-0.5 bg-slate-950/60 border border-slate-900 rounded font-mono text-[10px] text-emerald-400">{match[3]}</code>);
+    }
+    currentIdx = regex.lastIndex;
+  }
+  if (currentIdx < text.length) {
+    parts.push(text.substring(currentIdx));
+  }
+  return parts.length > 0 ? parts : text;
+};
+
+const renderMarkdown = (text) => {
+  if (!text) return null;
+  const lines = text.split('\n');
+  return lines.map((line, idx) => {
+    let trimmed = line.trim();
+    if (trimmed.startsWith('###')) {
+      trimmed = trimmed.replace(/^###\s*/, '');
+      return <h5 key={idx} className="font-bold text-blue-400 mt-3 mb-1 text-[11px] uppercase tracking-wider">{parseInlineMarkdown(trimmed)}</h5>;
+    }
+    if (trimmed.startsWith('##')) {
+      trimmed = trimmed.replace(/^##\s*/, '');
+      return <h4 key={idx} className="font-bold text-blue-400 mt-4 mb-2 text-xs uppercase tracking-wider">{parseInlineMarkdown(trimmed)}</h4>;
+    }
+    if (trimmed.startsWith('#')) {
+      trimmed = trimmed.replace(/^#\s*/, '');
+      return <h3 key={idx} className="font-bold text-blue-400 mt-4 mb-2 text-sm uppercase tracking-wider">{parseInlineMarkdown(trimmed)}</h3>;
+    }
+    if (trimmed.startsWith('-') || trimmed.startsWith('•') || trimmed.startsWith('*')) {
+      const itemText = trimmed.replace(/^[-•*]\s*/, '');
+      return (
+        <div key={idx} className="flex items-start space-x-2 pl-2 py-0.5 text-xs text-slate-300">
+          <span className="text-blue-400 select-none">•</span>
+          <span className="flex-1">{parseInlineMarkdown(itemText)}</span>
+        </div>
+      );
+    }
+    if (trimmed === '') {
+      return <div key={idx} className="h-1.5" />;
+    }
+    return (
+      <p key={idx} className="text-xs text-slate-300 leading-relaxed py-0.5">
+        {parseInlineMarkdown(line)}
+      </p>
+    );
+  });
+};
+
+const parseInlineMarkdownPdf = (text) => {
+  if (typeof text !== 'string') return text;
+  const parts = [];
+  let currentIdx = 0;
+  const regex = /(\*\*(.*?)\*\*|`(.*?)`)/g;
+  let match;
+  while ((match = regex.exec(text)) !== null) {
+    const matchIdx = match.index;
+    if (matchIdx > currentIdx) {
+      parts.push(text.substring(currentIdx, matchIdx));
+    }
+    if (match[2] !== undefined) {
+      parts.push(<strong key={matchIdx} style={{ fontWeight: 'bold', color: '#ffffff' }}>{match[2]}</strong>);
+    } else if (match[3] !== undefined) {
+      parts.push(<code key={matchIdx} style={{ padding: '2px 4px', backgroundColor: '#020617', border: '1px solid #1e293b', borderRadius: '4px', fontFamily: 'monospace', fontSize: '9.5px', color: '#34d399' }}>{match[3]}</code>);
+    }
+    currentIdx = regex.lastIndex;
+  }
+  if (currentIdx < text.length) {
+    parts.push(text.substring(currentIdx));
+  }
+  return parts.length > 0 ? parts : text;
+};
+
+const renderPdfMarkdown = (text) => {
+  if (!text) return null;
+  const lines = text.split('\n');
+  return lines.map((line, idx) => {
+    let trimmed = line.trim();
+    if (trimmed.startsWith('###')) {
+      trimmed = trimmed.replace(/^###\s*/, '');
+      return <h5 key={idx} style={{ fontWeight: 'bold', color: '#38bdf8', marginTop: '12px', marginBottom: '4px', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{parseInlineMarkdownPdf(trimmed)}</h5>;
+    }
+    if (trimmed.startsWith('##')) {
+      trimmed = trimmed.replace(/^##\s*/, '');
+      return <h4 key={idx} style={{ fontWeight: 'bold', color: '#38bdf8', marginTop: '16px', marginBottom: '6px', fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{parseInlineMarkdownPdf(trimmed)}</h4>;
+    }
+    if (trimmed.startsWith('#')) {
+      trimmed = trimmed.replace(/^#\s*/, '');
+      return <h3 key={idx} style={{ fontWeight: 'bold', color: '#38bdf8', marginTop: '16px', marginBottom: '6px', fontSize: '13px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{parseInlineMarkdownPdf(trimmed)}</h3>;
+    }
+    if (trimmed.startsWith('-') || trimmed.startsWith('•') || trimmed.startsWith('*')) {
+      const itemText = trimmed.replace(/^[-•*]\s*/, '');
+      return (
+        <div key={idx} style={{ display: 'flex', alignItems: 'flex-start', paddingLeft: '8px', paddingBottom: '2px', fontSize: '11px', color: '#cbd5e1' }}>
+          <span style={{ color: '#38bdf8', marginRight: '6px', userSelect: 'none' }}>•</span>
+          <span style={{ flex: 1 }}>{parseInlineMarkdownPdf(itemText)}</span>
+        </div>
+      );
+    }
+    if (trimmed === '') {
+      return <div key={idx} style={{ height: '6px' }} />;
+    }
+    return (
+      <p key={idx} style={{ fontSize: '11px', color: '#cbd5e1', lineHeight: '1.5', margin: '4px 0' }}>
+        {parseInlineMarkdownPdf(line)}
+      </p>
+    );
+  });
+};
+
 export default function App() {
-  // Authentication states
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [authMode, setAuthMode] = useState('login'); 
   const [username, setUsername] = useState('');
@@ -533,6 +654,8 @@ export default function App() {
   const [isPolling, setIsPolling] = useState(false);
   const [dragActive, setDragActive] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [isStreamConfigOpen, setIsStreamConfigOpen] = useState(true);
+  const [userEmail, setUserEmail] = useState(() => localStorage.getItem('user_email') || '');
 
   // Custom models fetching states
   const [fetchedModels, setFetchedModels] = useState(() => {
@@ -933,9 +1056,13 @@ export default function App() {
   useEffect(() => {
     const token = localStorage.getItem('session_token');
     const storedUser = localStorage.getItem('username');
+    const storedEmail = localStorage.getItem('user_email');
     if (token && storedUser) {
       setIsLoggedIn(true);
       setUsername(storedUser);
+      if (storedEmail) {
+        setUserEmail(storedEmail);
+      }
     }
   }, []);
 
@@ -1047,6 +1174,9 @@ export default function App() {
       setIsLoggedIn(true);
       localStorage.setItem('session_token', result.token || 'authenticated');
       localStorage.setItem('username', username);
+      const emailVal = result.email || email || (authMode === 'login' ? 'guest@sentinelforge.ai' : email);
+      localStorage.setItem('user_email', emailVal);
+      setUserEmail(emailVal);
       addConsoleLog(`🔒 User ${username} authenticated successfully via backend.`, 'success');
     } catch (err) {
       // Offline fallback for development when orchestrator is not running
@@ -1054,6 +1184,8 @@ export default function App() {
         setIsLoggedIn(true);
         localStorage.setItem('session_token', 'token_admin');
         localStorage.setItem('username', 'admin');
+        localStorage.setItem('user_email', 'admin@sentinelforge.ai');
+        setUserEmail('admin@sentinelforge.ai');
         addConsoleLog(`🔒 User admin authenticated via offline fallback.`, 'success');
       } else {
         setAuthError(`Connection to authentication service failed: ${err.message}`);
@@ -1121,6 +1253,7 @@ export default function App() {
           setMetrics(null);
           setConsoleLogs([]);
           setIsPolling(true);
+          setIsStreamConfigOpen(false); // auto-collapse config
         } else {
           alert("A valid URL is required to start the live ingestion feed.");
         }
@@ -1130,9 +1263,11 @@ export default function App() {
         setMetrics(null);
         setConsoleLogs([]);
         setIsPolling(true);
+        setIsStreamConfigOpen(false); // auto-collapse config
       }
     } else {
       setIsPolling(false);
+      setIsStreamConfigOpen(true); // auto-expand config
     }
   };
 
@@ -1323,6 +1458,7 @@ export default function App() {
       setActiveStep(s.activeStep);
       setLiveLogUrl(s.liveLogUrl);
       setIsPolling(s.isPolling);
+      setIsStreamConfigOpen(!s.isPolling);
       
       addConsoleLog("🟢 Online System mode loaded from local cache.", "system");
       
@@ -1368,6 +1504,7 @@ export default function App() {
     // 4. Start polling & simulator execution loops
     setIsPolling(true);
     setIsSimulating(true);
+    setIsStreamConfigOpen(false); // auto-collapse config
     
     // 5. Switch active tab back to main dashboard
     setActiveTab("DASHBOARD");
@@ -1836,6 +1973,8 @@ export default function App() {
               setIsLoggedIn(false);
               localStorage.removeItem('session_token');
               localStorage.removeItem('username');
+              localStorage.removeItem('user_email');
+              setUserEmail('');
             }}
             className="text-xs bg-slate-900 border border-slate-800 hover:border-rose-500/40 hover:text-rose-400 px-3 py-1.5 rounded-xl transition-all"
           >
@@ -1847,7 +1986,7 @@ export default function App() {
       {/* Settings Drawer */}
       {showSettings && (
         <div className="bg-slate-950/90 backdrop-blur-xl border-b border-slate-800/80 px-6 py-5 z-20 relative transition-all duration-300 ease-in-out shadow-2xl">
-          <div className="max-w-7xl mx-auto grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-6">
+          <div className="max-w-7xl mx-auto grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-6">
             
             {/* Provider Selection */}
             <div>
@@ -1971,6 +2110,24 @@ export default function App() {
                   )}
                 </>
               )}
+            </div>
+
+            {/* Operator Account Profile */}
+            <div className="p-4 rounded-2xl bg-slate-950/50 border border-slate-800/80 flex flex-col justify-center space-y-2.5 shadow-inner backdrop-blur-md">
+              <div className="flex items-center space-x-1.5">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Account Operator</span>
+                <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-500 shadow-[0_0_8px_#10b981]"></span>
+              </div>
+              <div className="space-y-1.5">
+                <div>
+                  <span className="text-[8px] text-slate-500 font-bold block uppercase tracking-wider">Username</span>
+                  <span className="text-xs font-semibold text-slate-200">{username}</span>
+                </div>
+                <div>
+                  <span className="text-[8px] text-slate-500 font-bold block uppercase tracking-wider">Email Address</span>
+                  <span className="text-[10px] text-slate-400 truncate font-mono block max-w-full">{userEmail || 'guest@sentinelforge.ai'}</span>
+                </div>
+              </div>
             </div>
 
           </div>
@@ -2123,32 +2280,73 @@ export default function App() {
               </>
             ) : (
               /* Online Ingestion Layout */
-              <div className="flex-grow flex flex-col space-y-4">
-                <div className="p-4 rounded-xl bg-slate-950/40 border border-slate-800/80 space-y-3.5 shadow-inner backdrop-blur-md">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-semibold text-slate-300">Stream Channel Address</span>
-                    <span className="text-[9px] bg-slate-900 px-1.5 py-0.5 rounded text-slate-500 font-mono">10s Rate</span>
+              <div className="flex-grow flex flex-col space-y-4 overflow-hidden">
+                <div className="p-4 rounded-xl bg-slate-950/40 border border-slate-800/80 space-y-3 shadow-inner backdrop-blur-md transition-all duration-300">
+                  <div 
+                    onClick={() => setIsStreamConfigOpen(!isStreamConfigOpen)}
+                    className="flex items-center justify-between cursor-pointer select-none hover:text-slate-200 group"
+                  >
+                    <div className="flex items-center space-x-2">
+                      <span className="text-xs font-semibold text-slate-300 group-hover:text-white transition-colors">Stream Channel Config</span>
+                      {isPolling && (
+                        <span className="inline-flex items-center space-x-1 px-1.5 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-[9px] text-emerald-400 font-medium">
+                          <span className="w-1 h-1 rounded-full bg-emerald-500 animate-ping"></span>
+                          <span>ACTIVE</span>
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center space-x-2 text-[10px] text-slate-500">
+                      {isPolling && !isStreamConfigOpen && (
+                        <span className="font-mono text-[9px] text-slate-400 max-w-[150px] truncate">
+                          {liveLogUrl.replace(/^https?:\/\//i, '')}
+                        </span>
+                      )}
+                      <span className="transform transition-transform duration-200">
+                        {isStreamConfigOpen ? '▼' : '▲'}
+                      </span>
+                    </div>
                   </div>
-                  <input 
-                    type="text" 
-                    value={liveLogUrl}
-                    onChange={e => setLiveLogUrl(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-800/80 rounded-xl px-3 py-2.5 text-xs text-slate-300 outline-none focus:border-blue-500/80 focus:ring-2 focus:ring-blue-500/10 font-mono"
-                    placeholder="http://localhost:8000/live-logs"
-                  />
-                  <div className="flex items-center justify-between pt-1">
-                    <span className="text-[10px] text-slate-500">Auto Ingest Sequence active</span>
-                    <button 
-                      onClick={handleTogglePolling}
-                      className={`px-5 py-2.5 rounded-xl text-xs font-semibold transition-all duration-300 ${
-                        isPolling 
-                          ? 'bg-rose-500/15 border border-rose-500/30 text-rose-400' 
-                          : 'bg-blue-600 hover:bg-blue-500 text-white shadow-md'
-                      }`}
-                    >
-                      {isPolling ? 'Terminate Feed' : 'Establish Ingest'}
-                    </button>
-                  </div>
+
+                  {isStreamConfigOpen ? (
+                    <div className="space-y-3.5 pt-2 border-t border-slate-900/60 animate-fadeIn">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] text-slate-400">Stream URL Endpoint</span>
+                        <span className="text-[9px] bg-slate-900 px-1.5 py-0.5 rounded text-slate-500 font-mono">10s Rate</span>
+                      </div>
+                      <input 
+                        type="text" 
+                        value={liveLogUrl}
+                        onChange={e => setLiveLogUrl(e.target.value)}
+                        className="w-full bg-slate-950 border border-slate-800/80 rounded-xl px-3 py-2.5 text-xs text-slate-300 outline-none focus:border-blue-500/80 focus:ring-2 focus:ring-blue-500/10 font-mono"
+                        placeholder="http://localhost:8000/live-logs"
+                      />
+                      <div className="flex items-center justify-between pt-1">
+                        <span className="text-[10px] text-slate-500">Auto Ingest Sequence active</span>
+                        <button 
+                          onClick={handleTogglePolling}
+                          className={`px-5 py-2.5 rounded-xl text-xs font-semibold transition-all duration-300 ${
+                            isPolling 
+                              ? 'bg-rose-500/15 border border-rose-500/30 text-rose-400' 
+                              : 'bg-blue-600 hover:bg-blue-500 text-white shadow-md'
+                          }`}
+                        >
+                          {isPolling ? 'Terminate Feed' : 'Establish Ingest'}
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    !isPolling && (
+                      <div className="flex items-center justify-between pt-2 border-t border-slate-900/40">
+                        <span className="text-[10px] text-slate-500">Ingest state: Idle</span>
+                        <button 
+                          onClick={handleTogglePolling}
+                          className="px-4 py-1.5 rounded-lg text-[10px] font-semibold bg-blue-600 hover:bg-blue-500 text-white transition-all shadow"
+                        >
+                          Establish Ingest
+                        </button>
+                      </div>
+                    )
+                  )}
                 </div>
 
                 <div className="flex-1 flex flex-col space-y-2 overflow-hidden">
@@ -2587,16 +2785,16 @@ export default function App() {
                   {/* Summary */}
                   <div className="text-xs bg-slate-950/40 border border-slate-800/80 p-4 rounded-xl shadow-inner backdrop-blur-sm">
                     <h4 className="font-semibold text-slate-200 mb-2 font-display uppercase tracking-wider text-[10px] text-blue-400">Executive Threat Analysis</h4>
-                    <div className="text-slate-300 space-y-1 font-sans leading-relaxed">
-                      <p>{finalReport.summary.replace(/###/g, '')}</p>
+                    <div className="text-slate-300 space-y-1.5 font-sans leading-relaxed">
+                      {renderMarkdown(finalReport.summary)}
                     </div>
                   </div>
 
                   {/* Actionable Remediation */}
                   <div className="text-xs bg-slate-950/40 border border-slate-800/80 p-4 rounded-xl shadow-inner backdrop-blur-sm">
                     <h4 className="font-semibold text-slate-200 mb-2 font-display uppercase tracking-wider text-[10px] text-indigo-400">Actionable Remediation Checklist</h4>
-                    <div className="text-slate-300 space-y-1 font-sans leading-relaxed whitespace-pre-line">
-                      {finalReport.recommendations}
+                    <div className="text-slate-300 space-y-1.5 font-sans leading-relaxed">
+                      {renderMarkdown(finalReport.recommendations)}
                     </div>
                   </div>
 
@@ -3233,8 +3431,8 @@ export default function App() {
             }}>
               EXECUTIVE SUMMARY
             </h3>
-            <div style={{ fontSize: '11.5px', color: '#cbd5e1', lineHeight: '1.6', whiteSpace: 'pre-line' }}>
-              {finalReport.summary.replace(/###/g, '')}
+            <div style={{ fontSize: '11px', color: '#cbd5e1', lineHeight: '1.5' }}>
+              {renderPdfMarkdown(finalReport.summary)}
             </div>
           </div>
 
