@@ -1225,6 +1225,9 @@ export default function App() {
                    (simCustomUser ? `&user=${simCustomUser}` : "");
     setLiveLogUrl(simUrl);
     
+    // Sync ingestion format to match simulator format
+    setLogFormat(simFormat);
+    
     // 3. Clear previous outputs
     setLogs("");
     setFinalReport(null);
@@ -1802,6 +1805,11 @@ export default function App() {
                 className="bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1 text-[10px] text-slate-400 outline-none cursor-pointer hover:border-slate-700"
               >
                 <option value="Syslog">Syslog RFC 3164</option>
+                <option value="Windows Event Logs">Windows Event</option>
+                <option value="Nginx">Nginx Logs</option>
+                <option value="Apache">Apache Logs</option>
+                <option value="Linux Auth Logs">Linux Auth</option>
+                <option value="Firewall Logs">Firewall Logs</option>
                 <option value="JSON">JSON Loglines</option>
                 <option value="CSV">CSV Comma Separated</option>
                 <option value="XML">XML Structured</option>

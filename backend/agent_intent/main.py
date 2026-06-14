@@ -10,6 +10,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..",
 
 from backend.shared.types import IntentObject
 from backend.shared.ai_adapter import AIAdapter
+from backend.shared.json_utils import extract_json
 from backend.shared.utils import get_logger, get_config
 
 logger = get_logger("IntentAgent")
@@ -100,30 +101,30 @@ async def analyze_intent(request: IntentRequest):
         adapter = AIAdapter(provider=provider, model=model, api_key=request.api_key, base_url=request.api_base_url)
         full_prompt = f"{FEW_SHOT_EXAMPLES}\n\nPrompt: \"{request.prompt}\"\nContext: {request.context or 'None'}\nResult:"
         
-        response_text = adapter.generate(prompt=full_prompt, system_instruction=SYSTEM_INSTRUCTION)
+        response_text = adapter.generate(prompt=full_prompt, system_instruction=SYSTEM_INSTRUCTION, temperature=0.1)
         
-        # Clean up any potential markdown formatting
-        cleaned_text = response_text.strip()
-        if cleaned_text.startswith("```"):
-            lines = cleaned_text.splitlines()
-            if lines[0].startswith("```"):
-                lines = lines[1:]
-            if lines[-1].startswith("```"):
-                lines = lines[:-1]
-            cleaned_text = "\n".join(lines).strip()
-            
-        json_data = json.loads(cleaned_text)
+        json_data = extract_json(response_text)
         
         # Ensure raw_prompt matches
         json_data["raw_prompt"] = request.prompt
         
         return IntentObject(**json_data)
         
-    except json.JSONDecodeError as je:
-        logger.error(f"Failed to parse model response as JSON: {response_text}. Error: {je}")
-        raise HTTPException(
-            status_code=502, 
-            detail=f"Model generated invalid JSON output. Response text: {response_text}"
+    except ValueError as ve:
+        # extract_json failed — try regex fallback to salvage intent_class
+        logger.warning(f"JSON extraction failed, attempting regex fallback: {ve}")
+        import re
+        intent_classes = ["Security", "Performance", "Availability", "Compliance", "Usage Analytics"]
+        detected_class = "Security"  # safe default
+        for ic in intent_classes:
+            if ic.lower() in response_text.lower():
+                detected_class = ic
+                break
+        return IntentObject(
+            intent_class=detected_class,
+            entities={"ip_address": None, "user": None, "resource": None},
+            conditions={"threshold": 5, "time_window": None},
+            raw_prompt=request.prompt
         )
     except Exception as e:
         logger.error(f"Error in intent analysis agent: {e}")

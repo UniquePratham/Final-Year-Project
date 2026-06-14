@@ -38,9 +38,16 @@ def mock_subservices(monkeypatch):
         elif "/process-data" in url:
             return MockAsyncResponse({
                 "logs_normalized": [
-                    {"timestamp": "2026-06-12T15:45:20Z", "level": "ERROR", "message": "Failed login", "raw": "..."}
+                    {"timestamp": "2026-06-12T15:45:20Z", "level": "ERROR", "message": "Failed login", "raw": "...", "source_ip": "192.168.1.105"}
                 ],
-                "metrics": {"total_records": 1, "filtered_records": 1, "error_count": 1}
+                "metrics": {
+                    "total_records": 1, "filtered_records": 1, "error_count": 1, "warning_count": 0,
+                    "unique_ips_count": 1,
+                    "top_ips": [["192.168.1.105", 1]],
+                    "services": {"sshd": 1},
+                    "level_distribution": {"ERROR": 1},
+                    "user_distribution": {"root": 1}
+                }
             })
         elif "/analyze-metrics" in url:
             return MockAsyncResponse({
@@ -56,6 +63,21 @@ def mock_subservices(monkeypatch):
                 "summary": "Failed login brute force report summary",
                 "recommendations": "Verify IP settings",
                 "affected_resources": []
+            })
+        elif "/mitigate-incident" in url:
+            return MockAsyncResponse({
+                "mitigation_actions": [
+                    {
+                        "action_type": "Block IP",
+                        "command": "iptables -A INPUT -s 192.168.1.105 -j DROP",
+                        "description": "Block brute force attacker",
+                        "target": "192.168.1.105",
+                        "status": "PENDING"
+                    }
+                ],
+                "alert_triggered": True,
+                "response_summary": "Mitigation steps: block offending IP.",
+                "generated_at": "2026-06-12T15:46:30Z"
             })
         return MockAsyncResponse({}, 404)
 

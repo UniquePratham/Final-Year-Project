@@ -306,7 +306,7 @@ async def run_orchestration_pipeline(run_id: str, request: OrchestratorRequest):
     save_run(run_id, request.prompt, request.log_format, "RUNNING")
     yield await sse_event("pipeline_started", {"run_id": run_id, "timestamp": datetime.utcnow().isoformat()})
     
-    async with httpx.AsyncClient(timeout=120.0) as client:
+    async with httpx.AsyncClient(timeout=300.0) as client:
         # ---- STEP 1: Intent Agent ----
         intent_step_id = uuid.uuid4().hex[:8]
         yield await sse_event("intent_started", {"step_id": intent_step_id})
@@ -401,6 +401,7 @@ async def run_orchestration_pipeline(run_id: str, request: OrchestratorRequest):
             report_payload = {
                 "intent": intent_obj,
                 "analysis_result": analysis_obj,
+                "metrics": data_obj.get("metrics"),
                 "provider": request.provider,
                 "model": request.model,
                 "api_key": request.api_key,
@@ -429,6 +430,7 @@ async def run_orchestration_pipeline(run_id: str, request: OrchestratorRequest):
         try:
             response_payload = {
                 "final_report": report_obj,
+                "metrics": data_obj.get("metrics"),
                 "provider": request.provider,
                 "model": request.model,
                 "api_key": request.api_key,

@@ -2,6 +2,7 @@ import os
 import sys
 import re
 import csv
+import io
 import json
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
@@ -22,115 +23,360 @@ app = FastAPI(title="Sentinel Forge - Data Agent Service")
 class DataProcessRequest(BaseModel):
     intent: IntentObject
     logs_raw: str
-    log_format: str = "Syslog"  # Syslog, JSON, XML, CSV, TXT
+    log_format: str = "Syslog"
 
 class DataProcessResponse(BaseModel):
     logs_normalized: List[NormalizedLog]
     metrics: Dict[str, Any]
 
-# Regex for Syslog parsing (matches common RFC 3164 / 5424 timestamps and patterns)
+# ---------------------------------------------------------------------------
+# Regex patterns
+# ---------------------------------------------------------------------------
+
+# Universal syslog-family regex: handles BSD (Jun 13 22:47:09),
+# ISO 8601 (2026-06-13T22:47:09Z), and Windows Event (2026-06-13 22:47:09).
 SYSLOG_REGEX = re.compile(
-    r'^(?P<timestamp>\w{3}\s+\d+\s+\d{2}:\d{2}:\d{2}|\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?)\s+'
+    r'^(?P<timestamp>'
+    r'\w{3}\s+\d+\s+\d{2}:\d{2}:\d{2}'                          # BSD:   Jun 13 22:47:09
+    r'|\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?'  # ISO / Windows Event
+    r')\s+'
     r'(?P<host>[^\s]+)\s+'
     r'(?:(?P<service>[a-zA-Z0-9_\-\./]+)(?:\[(?P<pid>\d+)\])?:?\s+)?'
     r'(?P<message>.*)$'
 )
 
-# Regex to detect IP addresses
+# Nginx / Apache combined log format
+NGINX_REGEX = re.compile(
+    r'^(?P<source_ip>\d+\.\d+\.\d+\.\d+)\s+\S+\s+(?P<user>\S+)\s+'
+    r'\[(?P<timestamp>[^\]]+)\]\s+'
+    r'"(?P<method>\w+)\s+(?P<path>\S+)\s+[^"]*"\s+'
+    r'(?P<status>\d+)\s+(?P<size>\d+)'
+    r'(?:\s+"(?P<referrer>[^"]*)"\s+"(?P<agent>[^"]*)")?'
+)
+
+# IP address detector
 IP_REGEX = re.compile(r'\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b')
 
+# ---------------------------------------------------------------------------
+# Level detection
+# ---------------------------------------------------------------------------
+
+def detect_log_level(message: str) -> str:
+    """Detect log severity from message content using keywords and event IDs."""
+    msg_lower = message.lower()
+
+    if any(kw in msg_lower for kw in ["critical", "fatal", "emergency", "panic"]):
+        return "CRITICAL"
+
+    if any(kw in msg_lower for kw in [
+        "fail", "error", "denied", "unauthorized", "refused",
+        "reject", "invalid", "blocked",
+    ]):
+        return "ERROR"
+
+    # Windows Security failure EventIDs
+    if re.search(r'eventid=(4625|4771|4776|529|530|531|532|533|534|535|536|537|539)', msg_lower):
+        return "ERROR"
+
+    if any(kw in msg_lower for kw in [
+        "warn", "warning", "locked", "timeout", "retry",
+        "deprecated", "throttle",
+    ]):
+        return "WARNING"
+
+    # Explicit Level= field in structured logs
+    level_match = re.search(r'level=([\w]+)', message, re.IGNORECASE)
+    if level_match:
+        lvl = level_match.group(1).upper()
+        if lvl in ("WARN", "WARNING"):
+            return "WARNING"
+        if lvl in ("ERROR", "ERR", "FATAL", "CRITICAL", "CRIT"):
+            return "ERROR"
+
+    return "INFO"
+
+# ---------------------------------------------------------------------------
+# Timestamp parsing
+# ---------------------------------------------------------------------------
+
+TIMESTAMP_FORMATS = [
+    "%Y-%m-%dT%H:%M:%S.%fZ",
+    "%Y-%m-%dT%H:%M:%SZ",
+    "%Y-%m-%dT%H:%M:%S%z",
+    "%Y-%m-%dT%H:%M:%S.%f%z",
+    "%Y-%m-%d %H:%M:%S",
+    "%b %d %H:%M:%S",
+    "%d/%b/%Y:%H:%M:%S %z",
+    "%Y-%m-%d",
+]
+
+def parse_timestamp(ts_str: str) -> datetime:
+    """Heuristic timestamp parser supporting all common log timestamp formats."""
+    for fmt in TIMESTAMP_FORMATS:
+        try:
+            if fmt == "%b %d %H:%M:%S":
+                parsed = datetime.strptime(ts_str, fmt)
+                parsed = parsed.replace(year=datetime.utcnow().year)
+            else:
+                parsed = datetime.strptime(ts_str, fmt)
+
+            if parsed.tzinfo is not None:
+                parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+            return parsed
+        except Exception:
+            continue
+    return datetime.utcnow()
+
+# ---------------------------------------------------------------------------
+# Format auto-detection
+# ---------------------------------------------------------------------------
+
+def auto_detect_format(raw_data: str) -> str:
+    """Sniff the first non-empty lines to determine log format."""
+    lines = [l.strip() for l in raw_data.strip().splitlines()[:20] if l.strip()]
+    if not lines:
+        return "TXT"
+
+    first = lines[0]
+
+    # JSON: first line starts with { or [
+    if first.startswith("{") or first.startswith("["):
+        return "JSON"
+
+    # XML: first line starts with <
+    if first.startswith("<"):
+        return "XML"
+
+    # CSV: first line looks like a header row (no digits at start, or known column names)
+    csv_header_names = (
+        "generated_log_line", "log_line", "raw_log", "log_entry",
+        "timestamp", "message", "msg", "time", "date", "raw",
+    )
+    first_lower = first.lower().replace(" ", "_").strip('"')
+    if first_lower in csv_header_names:
+        return "CSV"
+    # Multi-column CSV header heuristic: comma-separated words, no timestamp pattern
+    if "," in first and not re.match(r'^\d{4}-\d{2}-\d{2}', first) and not re.match(r'^\w{3}\s+\d+', first):
+        tokens = [t.strip().strip('"').lower().replace(" ", "_") for t in first.split(",")]
+        if any(t in csv_header_names for t in tokens):
+            return "CSV"
+
+    # Nginx / Apache combined log format: starts with an IP, then ` - `
+    if NGINX_REGEX.match(first):
+        return "NGINX"
+
+    # Syslog-family (BSD, Windows Event, Linux Auth, Firewall, generic)
+    if SYSLOG_REGEX.match(first):
+        return "SYSLOG"
+
+    return "TXT"
+
+# ---------------------------------------------------------------------------
+# Parsers
+# ---------------------------------------------------------------------------
+
 def parse_syslog(raw_data: str) -> List[NormalizedLog]:
-    normalized = []
+    """Universal syslog-family parser. Handles BSD syslog, Windows Event,
+    Linux Auth, Firewall, and any line matching TIMESTAMP HOST MESSAGE."""
+    normalized: List[NormalizedLog] = []
     lines = raw_data.strip().splitlines()
-    
+
     for line in lines:
-        if not line.strip():
+        line = line.strip()
+        if not line:
             continue
         match = SYSLOG_REGEX.match(line)
         if match:
             gd = match.groupdict()
-            # Timestamp normalization
-            ts_str = gd["timestamp"]
-            ts = parse_timestamp(ts_str)
-            
-            # Detect source IP in message or host
+            ts = parse_timestamp(gd["timestamp"])
             message = gd["message"]
             host = gd["host"]
+
+            # Extract source IP from message body
             source_ip = None
-            ip_match = IP_REGEX.search(message) or IP_REGEX.search(host)
-            if ip_match:
-                source_ip = ip_match.group(0)
-                
-            # Detect user if present in message (simple heuristic)
+            # Prefer explicit IP= field over first occurrence in text
+            ip_field = re.search(r'\bIP=(\d+\.\d+\.\d+\.\d+)', message)
+            if ip_field:
+                source_ip = ip_field.group(1)
+            else:
+                ip_match = IP_REGEX.search(message) or IP_REGEX.search(host)
+                if ip_match:
+                    source_ip = ip_match.group(0)
+
+            # Extract user from User= field or "for <user>" pattern
             user = None
-            user_match = re.search(r'(?:user|user=|for)\s+([a-zA-Z0-9_\-\.]+)', message, re.IGNORECASE)
-            if user_match:
-                user = user_match.group(1)
-                
+            user_field = re.search(r'\bUser=([a-zA-Z0-9_\-\.]+)', message, re.IGNORECASE)
+            if user_field:
+                user = user_field.group(1)
+            else:
+                user_match = re.search(r'(?:user|for)\s+([a-zA-Z0-9_\-\.]+)', message, re.IGNORECASE)
+                if user_match:
+                    user = user_match.group(1)
+
+            # Detect service from the regex or from the message body
+            service = gd.get("service") or "syslog"
+
             normalized.append(NormalizedLog(
                 timestamp=ts,
-                level="INFO" if "fail" not in message.lower() and "error" not in message.lower() else "ERROR",
+                level=detect_log_level(message),
                 source_ip=source_ip,
                 user=user,
-                service=gd.get("service") or "syslog",
+                service=service,
                 message=message,
                 raw=line
             ))
         else:
-            # Fallback for unparseable syslog line
+            # Fallback: still extract what we can from an unparseable line
+            source_ip = None
+            ip_match = IP_REGEX.search(line)
+            if ip_match:
+                source_ip = ip_match.group(0)
+            user = None
+            user_match = re.search(r'\bUser=([a-zA-Z0-9_\-\.]+)', line, re.IGNORECASE)
+            if user_match:
+                user = user_match.group(1)
+
             normalized.append(NormalizedLog(
                 timestamp=datetime.utcnow(),
-                level="INFO",
+                level=detect_log_level(line),
+                source_ip=source_ip,
+                user=user,
                 message=line,
                 raw=line
             ))
     return normalized
 
+
+def parse_nginx(raw_data: str) -> List[NormalizedLog]:
+    """Parse Nginx / Apache combined log format."""
+    normalized: List[NormalizedLog] = []
+    lines = raw_data.strip().splitlines()
+
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        match = NGINX_REGEX.match(line)
+        if match:
+            gd = match.groupdict()
+            ts = parse_timestamp(gd["timestamp"])
+            status = int(gd.get("status", 0))
+            method = gd.get("method", "")
+            path = gd.get("path", "")
+            user = gd.get("user")
+            if user == "-":
+                user = None
+
+            # Determine level from HTTP status
+            if status >= 500:
+                level = "ERROR"
+            elif status >= 400:
+                level = "WARNING"
+            else:
+                level = "INFO"
+
+            message = f"{method} {path} -> {status} ({gd.get('size', 0)}B)"
+
+            normalized.append(NormalizedLog(
+                timestamp=ts,
+                level=level,
+                source_ip=gd.get("source_ip"),
+                user=user,
+                service="nginx",
+                message=message,
+                raw=line
+            ))
+        else:
+            # Fallback to syslog parser for non-matching lines
+            normalized.extend(parse_syslog(line))
+    return normalized
+
+
 def parse_json_logs(raw_data: str) -> List[NormalizedLog]:
-    normalized = []
+    """Parse newline-delimited JSON log entries."""
+    normalized: List[NormalizedLog] = []
     lines = raw_data.strip().splitlines()
     for line in lines:
-        if not line.strip():
+        line = line.strip()
+        if not line:
             continue
         try:
             data = json.loads(line)
-            # Find common timestamp keys
             ts_val = data.get("timestamp") or data.get("time") or data.get("@timestamp")
             ts = parse_timestamp(str(ts_val)) if ts_val else datetime.utcnow()
-            
+
+            message = data.get("message") or data.get("msg") or str(data)
+
             normalized.append(NormalizedLog(
                 timestamp=ts,
-                level=data.get("level") or data.get("status") or "INFO",
+                level=data.get("level") or data.get("status") or detect_log_level(message),
                 source_ip=data.get("source_ip") or data.get("ip") or data.get("client_ip"),
                 user=data.get("user") or data.get("username"),
                 service=data.get("service") or data.get("app"),
-                message=data.get("message") or data.get("msg") or str(data),
+                message=message,
                 raw=line,
                 metadata=data
             ))
         except Exception:
             normalized.append(NormalizedLog(
                 timestamp=datetime.utcnow(),
-                level="INFO",
+                level=detect_log_level(line),
                 message=line,
                 raw=line
             ))
     return normalized
 
+
 def parse_csv_logs(raw_data: str) -> List[NormalizedLog]:
-    normalized = []
-    reader = csv.DictReader(raw_data.strip().splitlines())
+    """Parse CSV log files. Auto-detects single-column log dumps and unwraps them."""
+    normalized: List[NormalizedLog] = []
+    lines = raw_data.strip().splitlines()
+    reader = csv.DictReader(lines)
+    fieldnames = reader.fieldnames or []
+
+    # Detect single-column CSV that wraps raw log lines
+    log_dump_headers = (
+        "generated_log_line", "log_line", "log", "raw_log",
+        "message", "msg", "log_entry", "raw",
+    )
+    is_log_dump = (
+        len(fieldnames) == 1
+        and fieldnames[0].lower().replace(" ", "_") in log_dump_headers
+    )
+
+    if is_log_dump:
+        col_name = fieldnames[0]
+        unwrapped: List[str] = []
+        for row in reader:
+            cell = row.get(col_name, "")
+            if cell:
+                cell_clean = cell.replace("\\n", "\n")
+                for line in cell_clean.strip().splitlines():
+                    line_clean = line.strip().strip('"').strip("'").strip()
+                    if line_clean:
+                        unwrapped.append(line_clean)
+        if unwrapped:
+            joined = "\n".join(unwrapped)
+            # Auto-detect the inner format
+            inner_fmt = auto_detect_format(joined)
+            if inner_fmt == "NGINX":
+                return parse_nginx(joined)
+            if inner_fmt == "JSON":
+                return parse_json_logs(joined)
+            return parse_syslog(joined)
+        return normalized
+
+    # Standard multi-column CSV
     for row in reader:
-        # Find timestamp
         ts_val = row.get("timestamp") or row.get("time") or row.get("date")
         ts = parse_timestamp(str(ts_val)) if ts_val else datetime.utcnow()
-        
-        # Build message from all columns if message column doesn't exist
+
         message = row.get("message") or row.get("msg") or ", ".join([f"{k}={v}" for k, v in row.items()])
-        
+        level = row.get("level") or detect_log_level(message)
+
         normalized.append(NormalizedLog(
             timestamp=ts,
-            level=row.get("level") or "INFO",
+            level=level,
             source_ip=row.get("source_ip") or row.get("ip"),
             user=row.get("user") or row.get("username"),
             service=row.get("service") or "csv_import",
@@ -139,21 +385,24 @@ def parse_csv_logs(raw_data: str) -> List[NormalizedLog]:
         ))
     return normalized
 
+
 def parse_xml_logs(raw_data: str) -> List[NormalizedLog]:
-    normalized = []
+    """Parse XML log entries."""
+    normalized: List[NormalizedLog] = []
     try:
         root = ET.fromstring(f"<root>{raw_data}</root>")
         for log_entry in root:
             data = {child.tag: child.text for child in log_entry}
             ts_val = data.get("timestamp") or data.get("time")
             ts = parse_timestamp(str(ts_val)) if ts_val else datetime.utcnow()
+            message = data.get("message") or data.get("msg") or str(data)
             normalized.append(NormalizedLog(
                 timestamp=ts,
-                level=data.get("level") or "INFO",
+                level=data.get("level") or detect_log_level(message),
                 source_ip=data.get("source_ip") or data.get("ip"),
                 user=data.get("user") or data.get("username"),
                 service=data.get("service") or log_entry.tag,
-                message=data.get("message") or data.get("msg") or str(data),
+                message=message,
                 raw=ET.tostring(log_entry, encoding="utf-8").decode("utf-8")
             ))
     except Exception as e:
@@ -161,54 +410,46 @@ def parse_xml_logs(raw_data: str) -> List[NormalizedLog]:
         return parse_txt_logs(raw_data)
     return normalized
 
+
 def parse_txt_logs(raw_data: str) -> List[NormalizedLog]:
-    normalized = []
+    """Fallback plain-text parser. Extracts whatever it can from each line."""
+    normalized: List[NormalizedLog] = []
     lines = raw_data.strip().splitlines()
     for line in lines:
-        if not line.strip():
+        line = line.strip()
+        if not line:
             continue
+
+        source_ip = None
+        ip_match = IP_REGEX.search(line)
+        if ip_match:
+            source_ip = ip_match.group(0)
+
+        user = None
+        user_match = re.search(r'\bUser=([a-zA-Z0-9_\-\.]+)', line, re.IGNORECASE)
+        if user_match:
+            user = user_match.group(1)
+
         normalized.append(NormalizedLog(
             timestamp=datetime.utcnow(),
-            level="INFO",
+            level=detect_log_level(line),
+            source_ip=source_ip,
+            user=user,
             message=line,
             raw=line
         ))
     return normalized
 
-def parse_timestamp(ts_str: str) -> datetime:
-    """Heuristic timestamp parser."""
-    formats = [
-        "%Y-%m-%dT%H:%M:%S.%fZ",
-        "%Y-%m-%dT%H:%M:%SZ",
-        "%Y-%m-%d %H:%M:%S",
-        "%b %d %H:%M:%S",
-        "%d/%b/%Y:%H:%M:%S %z",
-        "%Y-%m-%d"
-    ]
-    for fmt in formats:
-        try:
-            # Handle Syslog traditional (e.g., "Jun 12 15:45:20" - append current year)
-            if fmt == "%b %d %H:%M:%S":
-                parsed = datetime.strptime(ts_str, fmt)
-                parsed = parsed.replace(year=datetime.utcnow().year)
-            else:
-                parsed = datetime.strptime(ts_str, fmt)
-            
-            if parsed.tzinfo is not None:
-                parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
-            return parsed
-        except Exception:
-            continue
-    # Fallback to current time if unparseable
-    return datetime.utcnow()
+# ---------------------------------------------------------------------------
+# Filtering & metrics
+# ---------------------------------------------------------------------------
 
 def apply_filters(logs: List[NormalizedLog], intent: IntentObject) -> List[NormalizedLog]:
-    filtered = []
+    filtered: List[NormalizedLog] = []
     entities = intent.entities or {}
     conditions = intent.conditions or {}
-    
-    # Helper to clean string values
-    def clean_val(v):
+
+    def clean_val(v: Any) -> Optional[str]:
         if v is None:
             return None
         if isinstance(v, str):
@@ -222,7 +463,7 @@ def apply_filters(logs: List[NormalizedLog], intent: IntentObject) -> List[Norma
     target_user = clean_val(entities.get("user"))
     target_resource = clean_val(entities.get("resource"))
     time_window = clean_val(conditions.get("time_window"))
-    
+
     cutoff_time = None
     if time_window:
         match = re.match(r'(\d+)([smhd])', str(time_window))
@@ -232,40 +473,43 @@ def apply_filters(logs: List[NormalizedLog], intent: IntentObject) -> List[Norma
             cutoff_time = datetime.utcnow() - timedelta(**{delta_map[unit]: val})
 
     for log in logs:
-        # 1. Filter by cutoff time
         if cutoff_time and log.timestamp < cutoff_time:
             continue
-            
-        # 2. Filter by target IP
         if target_ip and log.source_ip != target_ip:
             continue
-            
-        # 3. Filter by User
         if target_user and log.user != target_user:
             continue
-            
-        # 4. Filter by resource/keyword
-        if target_resource and target_resource.lower() not in log.message.lower() and target_resource.lower() not in log.service.lower():
+        if target_resource and target_resource.lower() not in log.message.lower() and target_resource.lower() not in (log.service or "").lower():
             continue
-            
         filtered.append(log)
     return filtered
+
 
 def compute_metrics(all_logs: List[NormalizedLog], filtered_logs: List[NormalizedLog]) -> Dict[str, Any]:
     error_count = sum(1 for l in filtered_logs if l.level.upper() in ["ERROR", "CRITICAL", "FAIL", "FATAL"])
     warn_count = sum(1 for l in filtered_logs if l.level.upper() in ["WARN", "WARNING"])
-    
-    # Trace source IP distribution
-    ips = {}
+
+    ips: Dict[str, int] = {}
     for l in filtered_logs:
         if l.source_ip:
             ips[l.source_ip] = ips.get(l.source_ip, 0) + 1
-            
-    # Trace service distribution
-    services = {}
+
+    services: Dict[str, int] = {}
     for l in filtered_logs:
         if l.service:
             services[l.service] = services.get(l.service, 0) + 1
+
+    # Level distribution — lets the Analysis Agent see exact severity breakdown
+    level_dist: Dict[str, int] = {}
+    for l in filtered_logs:
+        lvl = l.level.upper()
+        level_dist[lvl] = level_dist.get(lvl, 0) + 1
+
+    # User distribution — surfaces brute-force user-targeting patterns
+    user_dist: Dict[str, int] = {}
+    for l in filtered_logs:
+        if l.user:
+            user_dist[l.user] = user_dist.get(l.user, 0) + 1
 
     return {
         "total_records": len(all_logs),
@@ -273,30 +517,89 @@ def compute_metrics(all_logs: List[NormalizedLog], filtered_logs: List[Normalize
         "error_count": error_count,
         "warning_count": warn_count,
         "unique_ips_count": len(ips),
-        "top_ips": sorted(ips.items(), key=lambda x: x[1], reverse=True)[:5],
-        "services": services
+        "top_ips": sorted(ips.items(), key=lambda x: x[1], reverse=True)[:10],
+        "services": services,
+        "level_distribution": level_dist,
+        "user_distribution": dict(sorted(user_dist.items(), key=lambda x: x[1], reverse=True)[:10]),
     }
+
+# ---------------------------------------------------------------------------
+# API endpoint
+# ---------------------------------------------------------------------------
+
+# Map all frontend format values to internal parser names
+FORMAT_ALIASES: Dict[str, str] = {
+    "SYSLOG": "SYSLOG",
+    "SYSLOG RFC 3164": "SYSLOG",
+    "WINDOWS EVENT": "SYSLOG",       # Same timestamp-host-message structure
+    "WINDOWS EVENT LOGS": "SYSLOG",
+    "LINUX AUTH": "SYSLOG",
+    "LINUX AUTH LOGS": "SYSLOG",
+    "FIREWALL": "SYSLOG",
+    "FIREWALL LOGS": "SYSLOG",
+    "NGINX": "NGINX",
+    "NGINX LOGS": "NGINX",
+    "APACHE": "NGINX",               # Same combined log format
+    "APACHE LOGS": "NGINX",
+    "JSON": "JSON",
+    "JSON LOGLINES": "JSON",
+    "CSV": "CSV",
+    "CSV COMMA SEPARATED": "CSV",
+    "XML": "XML",
+    "XML STRUCTURED": "XML",
+    "TXT": "TXT",
+    "PLAIN TXT": "TXT",
+}
+
+PARSERS = {
+    "SYSLOG": parse_syslog,
+    "NGINX": parse_nginx,
+    "JSON": parse_json_logs,
+    "CSV": parse_csv_logs,
+    "XML": parse_xml_logs,
+    "TXT": parse_txt_logs,
+}
+
 
 @app.post("/process-data", response_model=DataProcessResponse)
 async def process_data(request: DataProcessRequest):
-    logger.info(f"Processing raw log data. Format={request.log_format}")
-    
-    fmt = request.log_format.upper()
+    raw = request.logs_raw.strip()
+    user_hint = request.log_format.strip().upper()
+
+    # 1. Auto-detect the actual content format
+    detected = auto_detect_format(raw)
+
+    # 2. Resolve the user's dropdown selection through aliases
+    resolved_hint = FORMAT_ALIASES.get(user_hint, user_hint)
+
+    # 3. Decide which parser to use:
+    #    - Trust auto-detection for structural formats (JSON, XML, CSV, NGINX)
+    #    - For SYSLOG/TXT, prefer auto-detection but fall back to user hint
+    if detected in ("JSON", "XML", "CSV", "NGINX"):
+        fmt = detected
+    elif resolved_hint in PARSERS:
+        fmt = resolved_hint
+    else:
+        fmt = detected
+
+    logger.info(f"Processing logs. User hint='{request.log_format}' -> resolved='{resolved_hint}', auto-detected='{detected}', using='{fmt}'")
+
     try:
-        if fmt == "SYSLOG":
-            all_logs = parse_syslog(request.logs_raw)
-        elif fmt == "JSON":
-            all_logs = parse_json_logs(request.logs_raw)
-        elif fmt == "CSV":
-            all_logs = parse_csv_logs(request.logs_raw)
-        elif fmt == "XML":
-            all_logs = parse_xml_logs(request.logs_raw)
-        else:
-            all_logs = parse_txt_logs(request.logs_raw)
-            
+        parser = PARSERS.get(fmt, parse_syslog)
+        all_logs = parser(raw)
+
+        # Safety net: if the chosen parser produced zero results but syslog
+        # parser would have found some, retry with syslog as the universal fallback.
+        if not all_logs and fmt != "SYSLOG" and fmt != "TXT":
+            logger.info(f"Parser '{fmt}' produced 0 results. Retrying with syslog fallback.")
+            all_logs = parse_syslog(raw)
+
         filtered_logs = apply_filters(all_logs, request.intent)
         metrics = compute_metrics(all_logs, filtered_logs)
-        
+
+        logger.info(f"Parsed {len(all_logs)} logs, {len(filtered_logs)} after filtering. "
+                     f"Errors={metrics['error_count']}, Warnings={metrics['warning_count']}")
+
         return DataProcessResponse(
             logs_normalized=filtered_logs,
             metrics=metrics

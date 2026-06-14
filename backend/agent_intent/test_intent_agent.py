@@ -40,13 +40,31 @@ def test_analyze_intent_success(monkeypatch):
     assert data["entities"]["ip_address"] == "192.168.1.100"
     assert data["conditions"]["threshold"] == 10
 
-def test_analyze_intent_invalid_json(monkeypatch):
+def test_analyze_intent_invalid_json_fallback(monkeypatch):
     # Mock AIAdapter.generate to return non-JSON output
+    # The new regex fallback should still produce a valid intent
     monkeypatch.setattr(AIAdapter, "generate", lambda *args, **kwargs: "Internal server error or generic text")
 
     response = client.post(
         "/analyze-intent",
         json={"prompt": "Some query"}
     )
-    assert response.status_code == 502
-    assert "invalid JSON" in response.json()["detail"]
+    # With regex fallback, the agent returns 200 with a default intent
+    assert response.status_code == 200
+    data = response.json()
+    assert data["intent_class"] == "Security"  # default fallback
+    assert data["raw_prompt"] == "Some query"
+
+
+def test_analyze_intent_fallback_detects_class(monkeypatch):
+    # Mock returns non-JSON but mentions "Performance"
+    monkeypatch.setattr(AIAdapter, "generate", lambda *args, **kwargs: "The intent is Performance related to CPU spikes")
+
+    response = client.post(
+        "/analyze-intent",
+        json={"prompt": "Check CPU spikes"}
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["intent_class"] == "Performance"
+
