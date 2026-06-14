@@ -10,7 +10,7 @@ from pydantic import BaseModel
 # Adjust Python Path to find backend shared modules
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
-from backend.shared.types import FinalReport, ResponseObject, MitigationAction
+from backend.shared.types import AnalysisResult, ResponseObject, MitigationAction
 from backend.shared.ai_adapter import AIAdapter
 from backend.shared.json_utils import extract_json
 from backend.shared.utils import get_logger, get_config
@@ -23,7 +23,7 @@ app = FastAPI(title="Sentinel Forge - Response Agent Service")
 IP_REGEX = re.compile(r'\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b')
 
 class ResponseRequest(BaseModel):
-    final_report: FinalReport
+    analysis_result: AnalysisResult
     metrics: Optional[Dict[str, Any]] = None
     provider: Optional[str] = None
     model: Optional[str] = None
@@ -31,7 +31,7 @@ class ResponseRequest(BaseModel):
     api_base_url: Optional[str] = None
 
 SYSTEM_INSTRUCTION = """You are the Response & Mitigation Agent for Sentinel Forge: AI Log Analyzer.
-Your task is to analyze the executive log intelligence report and produce a structured list of actionable mitigation steps.
+Your task is to analyze the log analysis findings and produce a structured list of actionable mitigation steps.
 
 Available action types:
 1. "Block IP" -> Recommend dropping traffic from malicious/offending source IPs (e.g., using iptables, ufw).
@@ -40,8 +40,8 @@ Available action types:
 4. "Send Notification" -> Send admin notifications/webhooks for manual intervention.
 5. "Capacity Increase" -> Reallocate resource thresholds (e.g., CPU, Memory) or scale containers.
 
-IMPORTANT: If the report status is "Bad" and affected_resources contains IP addresses, you MUST include "Block IP" actions for those IPs.
-IMPORTANT: Always include at least one "Send Notification" action for Bad/Warning status.
+IMPORTANT: If the analysis severity is "HIGH" or "CRITICAL" and offending IPs are identified, you MUST include "Block IP" actions for those IPs.
+IMPORTANT: Always include at least one "Send Notification" action for HIGH/CRITICAL/MEDIUM severity.
 
 Response Schema (Strict JSON):
 {
@@ -68,16 +68,23 @@ def extract_ips_from_text(text: str) -> List[str]:
 
 @app.post("/mitigate-incident", response_model=ResponseObject)
 async def mitigate_incident(request: ResponseRequest):
-    logger.info(f"Generating mitigation response recommendations for status: {request.final_report.status}")
+    logger.info(f"Generating mitigation response recommendations for severity: {request.analysis_result.severity}")
 
     provider = request.provider or get_config("DEFAULT_PROVIDER", "ollama")
     model = request.model or get_config("DEFAULT_MODEL", "llama3")
 
-    # Check if report has warning/bad status
-    status = request.final_report.status.upper()
-    alert_triggered = status in ["WARNING", "BAD"]
+    # Check if severity requires alert
+    severity = request.analysis_result.severity.upper()
+    alert_triggered = severity in ["WARNING", "MEDIUM", "HIGH", "CRITICAL"]
 
-    if status == "GOOD":
+    # Gather affected resources from anomalies
+    affected_resources = []
+    for a in request.analysis_result.anomalies:
+        src = a.get("source_ip") or a.get("resource")
+        if src and src not in affected_resources:
+            affected_resources.append(src)
+
+    if severity == "LOW" and not affected_resources:
         return ResponseObject(
             mitigation_actions=[],
             alert_triggered=False,
@@ -85,13 +92,15 @@ async def mitigate_incident(request: ResponseRequest):
             generated_at=datetime.utcnow()
         )
 
-    # Collect all known IPs from affected_resources, summary, recommendations, and metrics
+    # Collect all known IPs from findings, anomalies, and metrics
     all_ips = set()
-    for resource in request.final_report.affected_resources:
-        if resource.count(".") == 3 or ":" in resource:
-            all_ips.add(resource)
-    all_ips.update(extract_ips_from_text(request.final_report.summary))
-    all_ips.update(extract_ips_from_text(request.final_report.recommendations))
+    for anomaly in request.analysis_result.anomalies:
+        ip = anomaly.get("source_ip")
+        if ip and ip.count(".") == 3:
+            all_ips.add(ip)
+
+    for finding in request.analysis_result.findings:
+        all_ips.update(extract_ips_from_text(finding))
 
     # Add top offending IPs from metrics
     if request.metrics:
@@ -114,15 +123,15 @@ async def mitigate_incident(request: ResponseRequest):
         - User Distribution: {json.dumps(m.get('user_distribution', {}))}"""
 
         prompt = f"""
-        Final Report Status: {request.final_report.status}
-        Executive Summary:
-        {request.final_report.summary}
+        Analysis Severity: {request.analysis_result.severity}
+        Trend: {request.analysis_result.trend}
+        Confidence Score: {request.analysis_result.confidence_score}
 
-        Actionable Recommendations:
-        {request.final_report.recommendations}
+        Findings:
+        {json.dumps(request.analysis_result.findings, indent=2)}
 
-        Affected Resources:
-        {json.dumps(request.final_report.affected_resources)}
+        Anomalies:
+        {json.dumps(request.analysis_result.anomalies, indent=2)}
 
         Known Offending IPs (from analysis): {json.dumps(list(all_ips))}
 {metrics_section}
@@ -170,7 +179,7 @@ async def mitigate_incident(request: ResponseRequest):
             ))
 
         # Restart affected services
-        for resource in request.final_report.affected_resources:
+        for resource in affected_resources:
             if resource.count(".") != 3 and ":" not in resource:
                 actions.append(MitigationAction(
                     action_type="Restart Service",
@@ -195,7 +204,7 @@ async def mitigate_incident(request: ResponseRequest):
             response_summary=(
                 f"### Fallback Incident Response\n\n"
                 f"- Detected {len(all_ips)} offending IP(s): {', '.join(all_ips) if all_ips else 'none identified'}\n"
-                f"- Affected resources: {', '.join(request.final_report.affected_resources) or 'none'}\n"
+                f"- Affected resources: {', '.join(affected_resources) or 'none'}\n"
                 f"- Recommending IP isolation, service restarts, and admin notification."
             ),
             generated_at=datetime.utcnow()

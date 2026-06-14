@@ -293,3 +293,40 @@ def test_brute_force_scenario_metrics():
     assert metrics["top_ips"][0][0] == "185.220.101.44"
     assert metrics["top_ips"][0][1] == 10
     assert metrics["level_distribution"]["ERROR"] == 10
+
+
+def test_historical_time_window_filtering():
+    """Verify that historical logs with past timestamps are not filtered out by time_window
+
+    because the reference cutoff is calculated relative to the latest log in the batch.
+    """
+    intent_payload = {
+        "intent_class": "Security",
+        "entities": {},
+        "conditions": {"time_window": "5m"},
+        "raw_prompt": "Detect brute force in last 5m"
+    }
+
+    # Logs from 2020:
+    # 2020-05-01 12:00:00 is the latest log.
+    # 2020-05-01 11:59:00 is within 5 minutes.
+    # 2020-05-01 11:50:00 is outside 5 minutes.
+    logs_raw = (
+        "2020-05-01 11:50:00 host sshd[12]: Failed password for root from 1.1.1.1\n"
+        "2020-05-01 11:59:00 host sshd[12]: Failed password for root from 1.1.1.1\n"
+        "2020-05-01 12:00:00 host sshd[12]: Failed password for root from 1.1.1.1\n"
+    )
+
+    payload = {
+        "intent": intent_payload,
+        "logs_raw": logs_raw,
+        "log_format": "Windows Event Logs"
+    }
+
+    response = client.post("/process-data", json=payload)
+    assert response.status_code == 200
+    data = response.json()
+
+    # The 11:59:00 and 12:00:00 logs should pass, but 11:50:00 should be filtered
+    assert len(data["logs_normalized"]) == 2
+

@@ -25,19 +25,20 @@ class AnalysisResult(BaseModel):
     confidence_score: float = Field(..., description="Confidence score between 0.0 and 1.0")
     findings: List[str] = Field(default_factory=list)
 
-class FinalReport(BaseModel):
-    status: str = Field(..., description="System health status: Good, Warning, or Bad")
-    summary: str = Field(..., description="Summary of the analysis and findings")
-    recommendations: str = Field(..., description="Actionable recommendations")
-    affected_resources: List[str] = Field(default_factory=list)
-    generated_at: datetime = Field(default_factory=datetime.utcnow)
-
 class MitigationAction(BaseModel):
     action_type: str = Field(..., description="e.g. Block IP, Restart Service, Adjust Firewall, Send Notification")
     command: Optional[str] = Field(None, description="CLI command or script execution recommendation")
     description: str = Field(..., description="Description of why this action is recommended")
     target: str = Field(..., description="Target entity, e.g. IP address or service name")
     status: str = Field("PENDING", description="Status of mitigation action: PENDING, EXECUTED, FAILED")
+
+class FinalReport(BaseModel):
+    status: str = Field(..., description="System health status: Good, Warning, or Bad")
+    summary: str = Field(..., description="Summary of the analysis and findings")
+    recommendations: str = Field(..., description="Actionable recommendations")
+    affected_resources: List[str] = Field(default_factory=list)
+    mitigation_actions: List[MitigationAction] = Field(default_factory=list)
+    generated_at: datetime = Field(default_factory=datetime.utcnow)
 
 class ResponseObject(BaseModel):
     mitigation_actions: List[MitigationAction] = Field(default_factory=list)

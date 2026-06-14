@@ -508,6 +508,18 @@ export default function App() {
   const [email, setEmail] = useState('');
   const [authError, setAuthError] = useState('');
 
+  // Agent modal inspection and dropdown states
+  const [agentStepDetails, setAgentStepDetails] = useState({
+    intent: null,
+    data: null,
+    analysis: null,
+    response: null,
+    report: null
+  });
+  const [activeInspectorAgent, setActiveInspectorAgent] = useState(null);
+  const [reportExportOpen, setReportExportOpen] = useState(false);
+  const [simExportOpen, setSimExportOpen] = useState(false);
+
   // Config parameters
   const [prompt, setPrompt] = useState(() => localStorage.getItem('sentinel_forge_prompt') || PROMPT_PRESETS[0]);
   const [logs, setLogs] = useState(''); // Empty by default - no fake logs!
@@ -869,11 +881,16 @@ export default function App() {
           if (response.ok) {
             const rawText = await response.text();
             if (rawText.trim()) {
-              setLogs(rawText);
-              addConsoleLog(`[Ingested Live logs]:\n${rawText.slice(0, 150)}...`, 'success');
-              
-              // Trigger analysis on live data
-              await executePipeline(rawText);
+              addConsoleLog(`[Ingested Live logs]: Received new chunk. Appending to history buffer...`, 'success');
+              setLogs(prev => {
+                const combined = prev ? prev + "\n" + rawText : rawText;
+                const lines = combined.split("\n").filter(Boolean);
+                const trimmed = lines.slice(-1000).join("\n");
+                setTimeout(() => {
+                  executePipeline(trimmed);
+                }, 0);
+                return trimmed;
+              });
             }
           } else {
             throw new Error(`Ingestion failed (status: ${response.status})`);
@@ -886,11 +903,16 @@ export default function App() {
             const duration = 10;
             const rawText = generateLogsJS(simScenario, simFormat, simRate, duration, simCustomIp, simCustomUser);
             
-            setLogs(rawText);
-            addConsoleLog(`[Ingested Live logs (Sandbox)]: \n${rawText.slice(0, 150)}...`, 'success');
-            
-            // Execute the pipeline on the generated log
-            await executePipeline(rawText);
+            setLogs(prev => {
+              const combined = prev ? prev + "\n" + rawText : rawText;
+              const lines = combined.split("\n").filter(Boolean);
+              const trimmed = lines.slice(-1000).join("\n");
+              setTimeout(() => {
+                executePipeline(trimmed);
+              }, 0);
+              return trimmed;
+            });
+            addConsoleLog(`[Ingested Live logs (Sandbox)]: Generated new chunk. Appending to history buffer...`, 'success');
           } else {
             addConsoleLog(`⚠️ Ingestion error: Failed to connect to stream at ${liveLogUrl} (${e.message})`, 'warning');
             setIsPolling(false);
@@ -1146,6 +1168,52 @@ export default function App() {
     link.click();
   };
 
+  const downloadPDF = () => {
+    addConsoleLog("Generating graphical security PDF report...", "info");
+    
+    const loadScript = (url) => {
+      return new Promise((resolve, reject) => {
+        if (window.html2pdf) {
+          resolve(window.html2pdf);
+          return;
+        }
+        const script = document.createElement("script");
+        script.type = "text/javascript";
+        script.src = url;
+        script.onload = () => resolve(window.html2pdf);
+        script.onerror = (err) => reject(err);
+        document.head.appendChild(script);
+      });
+    };
+
+    loadScript("https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js")
+      .then((html2pdf) => {
+        const element = document.getElementById('report-pdf-content');
+        if (!element) {
+          addConsoleLog("❌ Error: PDF template element not found in DOM.", "warning");
+          return;
+        }
+        const opt = {
+          margin:       0,
+          filename:     `sentinel_forge_report_${metrics?.run_id || 'run'}.pdf`,
+          image:        { type: 'jpeg', quality: 0.98 },
+          html2canvas:  { scale: 2, useCORS: true, backgroundColor: '#050b14' },
+          jsPDF:        { unit: 'in', format: 'letter', orientation: 'portrait' }
+        };
+        
+        html2pdf().set(opt).from(element).save()
+          .then(() => {
+            addConsoleLog("🏆 Graphical PDF report downloaded successfully.", "success");
+          })
+          .catch((err) => {
+            addConsoleLog(`❌ PDF generation failed: ${err.message}`, "warning");
+          });
+      })
+      .catch((err) => {
+        addConsoleLog(`❌ Failed to load html2pdf script: ${err.message}`, "warning");
+      });
+  };
+
   // Retention toggler between Online & Offline state systems
   const toggleSystemMode = (mode) => {
     if (systemMode === mode) return;
@@ -1275,6 +1343,13 @@ export default function App() {
       report: 'IDLE',
       response: 'IDLE'
     });
+    setAgentStepDetails({
+      intent: null,
+      data: null,
+      analysis: null,
+      response: null,
+      report: null
+    });
     setActiveStep('intent');
 
     const activeModel = model === 'custom' ? customModel : model;
@@ -1336,55 +1411,166 @@ export default function App() {
                 setStepStatuses(prev => ({ ...prev, intent: 'RUNNING' }));
                 setActiveStep('intent');
                 addConsoleLog("Invoking Intent Agent: Parsing query prompt...", 'info');
+                setAgentStepDetails(prev => ({
+                  ...prev,
+                  intent: {
+                    input: {
+                      prompt,
+                      provider,
+                      model: activeModel,
+                      api_base_url: apiBaseUrls[provider] || "default"
+                    },
+                    output: null,
+                    status: 'RUNNING',
+                    duration_ms: null
+                  }
+                }));
                 break;
 
               case "intent_completed":
                 setStepStatuses(prev => ({ ...prev, intent: 'COMPLETED' }));
                 addConsoleLog("Intent Agent completed successfully.", 'success');
+                setAgentStepDetails(prev => ({
+                  ...prev,
+                  intent: {
+                    ...prev.intent,
+                    output: eventData.output,
+                    status: 'COMPLETED',
+                    duration_ms: eventData.duration_ms
+                  }
+                }));
                 break;
 
               case "data_started":
                 setStepStatuses(prev => ({ ...prev, intent: 'COMPLETED', data: 'RUNNING' }));
                 setActiveStep('data');
                 addConsoleLog("Invoking Data Agent: Filtering and normalizing logs...", 'info');
+                setAgentStepDetails(prev => ({
+                  ...prev,
+                  data: {
+                    input: {
+                      intent: prev.intent?.output,
+                      logs_raw: logsContent.length > 5000 ? logsContent.substring(0, 5000) + "\n... [truncated for preview]" : logsContent,
+                      log_format: logFormat
+                    },
+                    output: null,
+                    status: 'RUNNING',
+                    duration_ms: null
+                  }
+                }));
                 break;
 
               case "data_completed":
                 setStepStatuses(prev => ({ ...prev, data: 'COMPLETED' }));
                 addConsoleLog("Data Agent completed successfully.", 'success');
+                setAgentStepDetails(prev => ({
+                  ...prev,
+                  data: {
+                    ...prev.data,
+                    output: eventData.output,
+                    status: 'COMPLETED',
+                    duration_ms: eventData.duration_ms
+                  }
+                }));
                 break;
 
               case "analysis_started":
                 setStepStatuses(prev => ({ ...prev, data: 'COMPLETED', analysis: 'RUNNING' }));
                 setActiveStep('analysis');
                 addConsoleLog("Invoking Analysis Agent: Evaluating log metrics...", 'info');
+                setAgentStepDetails(prev => ({
+                  ...prev,
+                  analysis: {
+                    input: {
+                      intent: prev.intent?.output,
+                      logs_count: prev.data?.output?.logs_normalized?.length || 0,
+                      metrics: prev.data?.output?.metrics
+                    },
+                    output: null,
+                    status: 'RUNNING',
+                    duration_ms: null
+                  }
+                }));
                 break;
 
               case "analysis_completed":
                 setStepStatuses(prev => ({ ...prev, analysis: 'COMPLETED' }));
                 addConsoleLog("Analysis Agent completed successfully.", 'success');
-                break;
-
-              case "report_started":
-                setStepStatuses(prev => ({ ...prev, analysis: 'COMPLETED', report: 'RUNNING' }));
-                setActiveStep('report');
-                addConsoleLog("Invoking Report Agent: Compiling security audit report...", 'info');
-                break;
-
-              case "report_completed":
-                setStepStatuses(prev => ({ ...prev, report: 'COMPLETED' }));
-                addConsoleLog("Report Agent completed. Executive summary compiled.", 'success');
+                setAgentStepDetails(prev => ({
+                  ...prev,
+                  analysis: {
+                    ...prev.analysis,
+                    output: eventData.output,
+                    status: 'COMPLETED',
+                    duration_ms: eventData.duration_ms
+                  }
+                }));
                 break;
 
               case "response_started":
-                setStepStatuses(prev => ({ ...prev, report: 'COMPLETED', response: 'RUNNING' }));
+                setStepStatuses(prev => ({ ...prev, analysis: 'COMPLETED', response: 'RUNNING' }));
                 setActiveStep('response');
                 addConsoleLog("Invoking Response Agent: Generating playbook playbooks...", 'info');
+                setAgentStepDetails(prev => ({
+                  ...prev,
+                  response: {
+                    input: {
+                      analysis_result: prev.analysis?.output,
+                      metrics: prev.data?.output?.metrics
+                    },
+                    output: null,
+                    status: 'RUNNING',
+                    duration_ms: null
+                  }
+                }));
                 break;
 
               case "response_completed":
                 setStepStatuses(prev => ({ ...prev, response: 'COMPLETED' }));
                 addConsoleLog("Response Agent completed. Mitigation actions compiled.", 'success');
+                setAgentStepDetails(prev => ({
+                  ...prev,
+                  response: {
+                    ...prev.response,
+                    output: eventData.output,
+                    status: 'COMPLETED',
+                    duration_ms: eventData.duration_ms
+                  }
+                }));
+                break;
+
+              case "report_started":
+                setStepStatuses(prev => ({ ...prev, response: 'COMPLETED', report: 'RUNNING' }));
+                setActiveStep('report');
+                addConsoleLog("Invoking Report Agent: Compiling security audit report...", 'info');
+                setAgentStepDetails(prev => ({
+                  ...prev,
+                  report: {
+                    input: {
+                      intent: prev.intent?.output,
+                      analysis_result: prev.analysis?.output,
+                      mitigation_actions: prev.response?.output?.mitigation_actions || [],
+                      metrics: prev.data?.output?.metrics
+                    },
+                    output: null,
+                    status: 'RUNNING',
+                    duration_ms: null
+                  }
+                }));
+                break;
+
+              case "report_completed":
+                setStepStatuses(prev => ({ ...prev, report: 'COMPLETED' }));
+                addConsoleLog("Report Agent completed. Executive summary compiled.", 'success');
+                setAgentStepDetails(prev => ({
+                  ...prev,
+                  report: {
+                    ...prev.report,
+                    output: eventData.output,
+                    status: 'COMPLETED',
+                    duration_ms: eventData.duration_ms
+                  }
+                }));
                 break;
 
               case "pipeline_completed":
@@ -1392,9 +1578,13 @@ export default function App() {
                 setFinalReport(eventData.final_report);
                 setMitigationActions(eventData.response_actions?.mitigation_actions || []);
                 setMetrics({
+                  run_id: eventData.run_id,
                   total: logsContent.split('\n').filter(Boolean).length,
                   filtered: eventData.final_report?.affected_resources?.length + 1 || 4,
-                  status: eventData.final_report?.status || "Bad"
+                  status: eventData.final_report?.status || "Bad",
+                  log_recency: eventData.final_report?.summary?.toLowerCase().includes('recent') || eventData.final_report?.summary?.toLowerCase().includes('real-time') ? 'recent (real-time stream)' : 'historical (past logs archive)',
+                  level_distribution: eventData.response_actions?.metrics?.level_distribution || {},
+                  top_ips: eventData.response_actions?.metrics?.top_ips || []
                 });
                 addConsoleLog("🏁 Log intelligence processing complete.", 'system');
                 break;
@@ -1979,12 +2169,16 @@ export default function App() {
               </svg>
               
               {/* Intent Agent Node */}
-              <div className={`flex flex-col items-center p-4 rounded-xl border transition-all duration-300 z-10 relative ${
-                activeStep === 'intent' ? 'bg-slate-900/95 border-blue-500 shadow-[0_0_15px_rgba(59,130,246,0.15)] node-pulse' :
-                stepStatuses.intent === 'COMPLETED' ? 'bg-slate-900/95 border-emerald-500/60 shadow-[0_0_15px_rgba(16,185,129,0.1)]' :
-                stepStatuses.intent === 'FAILED' ? 'bg-slate-900/95 border-rose-500/60 shadow-[0_0_15px_rgba(244,63,94,0.1)]' : 
-                'bg-slate-950/90 border-slate-800/80 opacity-70 hover:opacity-100 hover:border-slate-700'
-              }`}>
+              <div 
+                onClick={() => setActiveInspectorAgent('intent')}
+                className={`flex flex-col items-center p-4 rounded-xl border transition-all duration-300 z-10 relative cursor-pointer hover:scale-[1.02] active:scale-[0.98] ${
+                  activeStep === 'intent' ? 'bg-slate-900/95 border-blue-500 shadow-[0_0_15px_rgba(59,130,246,0.15)] node-pulse' :
+                  stepStatuses.intent === 'COMPLETED' ? 'bg-slate-900/95 border-emerald-500/60 shadow-[0_0_15px_rgba(16,185,129,0.1)]' :
+                  stepStatuses.intent === 'FAILED' ? 'bg-slate-900/95 border-rose-500/60 shadow-[0_0_15px_rgba(244,63,94,0.1)]' : 
+                  'bg-slate-950/90 border-slate-800/80 opacity-70 hover:opacity-100 hover:border-slate-700'
+                }`}
+                title="Click to inspect Intent Agent workspace"
+              >
                 <div className={`p-2.5 rounded-lg mb-2 transition-colors duration-300 ${
                   activeStep === 'intent' ? 'bg-blue-500/20 text-blue-400' :
                   stepStatuses.intent === 'COMPLETED' ? 'bg-emerald-500/20 text-emerald-400' :
@@ -2001,12 +2195,16 @@ export default function App() {
               </div>
 
               {/* Data Agent Node */}
-              <div className={`flex flex-col items-center p-4 rounded-xl border transition-all duration-300 z-10 relative ${
-                activeStep === 'data' ? 'bg-slate-900/95 border-blue-500 shadow-[0_0_15px_rgba(59,130,246,0.15)] node-pulse' :
-                stepStatuses.data === 'COMPLETED' ? 'bg-slate-900/95 border-emerald-500/60 shadow-[0_0_15px_rgba(16,185,129,0.1)]' :
-                stepStatuses.data === 'FAILED' ? 'bg-slate-900/95 border-rose-500/60 shadow-[0_0_15px_rgba(244,63,94,0.1)]' : 
-                'bg-slate-950/90 border-slate-800/80 opacity-70 hover:opacity-100 hover:border-slate-700'
-              }`}>
+              <div 
+                onClick={() => setActiveInspectorAgent('data')}
+                className={`flex flex-col items-center p-4 rounded-xl border transition-all duration-300 z-10 relative cursor-pointer hover:scale-[1.02] active:scale-[0.98] ${
+                  activeStep === 'data' ? 'bg-slate-900/95 border-blue-500 shadow-[0_0_15px_rgba(59,130,246,0.15)] node-pulse' :
+                  stepStatuses.data === 'COMPLETED' ? 'bg-slate-900/95 border-emerald-500/60 shadow-[0_0_15px_rgba(16,185,129,0.1)]' :
+                  stepStatuses.data === 'FAILED' ? 'bg-slate-900/95 border-rose-500/60 shadow-[0_0_15px_rgba(244,63,94,0.1)]' : 
+                  'bg-slate-950/90 border-slate-800/80 opacity-70 hover:opacity-100 hover:border-slate-700'
+                }`}
+                title="Click to inspect Data Agent workspace"
+              >
                 <div className={`p-2.5 rounded-lg mb-2 transition-colors duration-300 ${
                   activeStep === 'data' ? 'bg-blue-500/20 text-blue-400' :
                   stepStatuses.data === 'COMPLETED' ? 'bg-emerald-500/20 text-emerald-400' :
@@ -2023,12 +2221,16 @@ export default function App() {
               </div>
 
               {/* Analysis Agent Node */}
-              <div className={`flex flex-col items-center p-4 rounded-xl border transition-all duration-300 z-10 relative ${
-                activeStep === 'analysis' ? 'bg-slate-900/95 border-blue-500 shadow-[0_0_15px_rgba(59,130,246,0.15)] node-pulse' :
-                stepStatuses.analysis === 'COMPLETED' ? 'bg-slate-900/95 border-emerald-500/60 shadow-[0_0_15px_rgba(16,185,129,0.1)]' :
-                stepStatuses.analysis === 'FAILED' ? 'bg-slate-900/95 border-rose-500/60 shadow-[0_0_15px_rgba(244,63,94,0.1)]' : 
-                'bg-slate-950/90 border-slate-800/80 opacity-70 hover:opacity-100 hover:border-slate-700'
-              }`}>
+              <div 
+                onClick={() => setActiveInspectorAgent('analysis')}
+                className={`flex flex-col items-center p-4 rounded-xl border transition-all duration-300 z-10 relative cursor-pointer hover:scale-[1.02] active:scale-[0.98] ${
+                  activeStep === 'analysis' ? 'bg-slate-900/95 border-blue-500 shadow-[0_0_15px_rgba(59,130,246,0.15)] node-pulse' :
+                  stepStatuses.analysis === 'COMPLETED' ? 'bg-slate-900/95 border-emerald-500/60 shadow-[0_0_15px_rgba(16,185,129,0.1)]' :
+                  stepStatuses.analysis === 'FAILED' ? 'bg-slate-900/95 border-rose-500/60 shadow-[0_0_15px_rgba(244,63,94,0.1)]' : 
+                  'bg-slate-950/90 border-slate-800/80 opacity-70 hover:opacity-100 hover:border-slate-700'
+                }`}
+                title="Click to inspect Analysis Agent workspace"
+              >
                 <div className={`p-2.5 rounded-lg mb-2 transition-colors duration-300 ${
                   activeStep === 'analysis' ? 'bg-blue-500/20 text-blue-400' :
                   stepStatuses.analysis === 'COMPLETED' ? 'bg-emerald-500/20 text-emerald-400' :
@@ -2044,35 +2246,17 @@ export default function App() {
                 }`}>{stepStatuses.analysis}</span>
               </div>
 
-              {/* Report Agent Node */}
-              <div className={`flex flex-col items-center p-4 rounded-xl border transition-all duration-300 z-10 relative ${
-                activeStep === 'report' ? 'bg-slate-900/95 border-blue-500 shadow-[0_0_15px_rgba(59,130,246,0.15)] node-pulse' :
-                stepStatuses.report === 'COMPLETED' ? 'bg-slate-900/95 border-emerald-500/60 shadow-[0_0_15px_rgba(16,185,129,0.1)]' :
-                stepStatuses.report === 'FAILED' ? 'bg-slate-900/95 border-rose-500/60 shadow-[0_0_15px_rgba(244,63,94,0.1)]' : 
-                'bg-slate-950/90 border-slate-800/80 opacity-70 hover:opacity-100 hover:border-slate-700'
-              }`}>
-                <div className={`p-2.5 rounded-lg mb-2 transition-colors duration-300 ${
-                  activeStep === 'report' ? 'bg-blue-500/20 text-blue-400' :
-                  stepStatuses.report === 'COMPLETED' ? 'bg-emerald-500/20 text-emerald-400' :
-                  stepStatuses.report === 'FAILED' ? 'bg-rose-500/20 text-rose-400' : 'bg-slate-800/60 text-slate-500'
-                }`}>
-                  <Icons.CheckCircle />
-                </div>
-                <span className="font-display font-semibold text-xs text-slate-200">Report Agent</span>
-                <span className={`text-[9px] mt-1.5 font-mono font-semibold px-2 py-0.5 rounded-full ${
-                  activeStep === 'report' ? 'bg-blue-500/10 text-blue-400' :
-                  stepStatuses.report === 'COMPLETED' ? 'bg-emerald-500/10 text-emerald-400' :
-                  stepStatuses.report === 'FAILED' ? 'bg-rose-500/10 text-rose-400 font-bold' : 'bg-slate-900 text-slate-500'
-                }`}>{stepStatuses.report}</span>
-              </div>
-
               {/* Response Agent Node */}
-              <div className={`flex flex-col items-center p-4 rounded-xl border transition-all duration-300 z-10 relative ${
-                activeStep === 'response' ? 'bg-slate-900/95 border-blue-500 shadow-[0_0_15px_rgba(59,130,246,0.15)] node-pulse' :
-                stepStatuses.response === 'COMPLETED' ? 'bg-slate-900/95 border-emerald-500/60 shadow-[0_0_15px_rgba(16,185,129,0.1)]' :
-                stepStatuses.response === 'FAILED' ? 'bg-slate-900/95 border-rose-500/60 shadow-[0_0_15px_rgba(244,63,94,0.1)]' : 
-                'bg-slate-950/90 border-slate-800/80 opacity-70 hover:opacity-100 hover:border-slate-700'
-              }`}>
+              <div 
+                onClick={() => setActiveInspectorAgent('response')}
+                className={`flex flex-col items-center p-4 rounded-xl border transition-all duration-300 z-10 relative cursor-pointer hover:scale-[1.02] active:scale-[0.98] ${
+                  activeStep === 'response' ? 'bg-slate-900/95 border-blue-500 shadow-[0_0_15px_rgba(59,130,246,0.15)] node-pulse' :
+                  stepStatuses.response === 'COMPLETED' ? 'bg-slate-900/95 border-emerald-500/60 shadow-[0_0_15px_rgba(16,185,129,0.1)]' :
+                  stepStatuses.response === 'FAILED' ? 'bg-slate-900/95 border-rose-500/60 shadow-[0_0_15px_rgba(244,63,94,0.1)]' : 
+                  'bg-slate-950/90 border-slate-800/80 opacity-70 hover:opacity-100 hover:border-slate-700'
+                }`}
+                title="Click to inspect Response Agent workspace"
+              >
                 <div className={`p-2.5 rounded-lg mb-2 transition-colors duration-300 ${
                   activeStep === 'response' ? 'bg-blue-500/20 text-blue-400' :
                   stepStatuses.response === 'COMPLETED' ? 'bg-emerald-500/20 text-emerald-400' :
@@ -2086,6 +2270,32 @@ export default function App() {
                   stepStatuses.response === 'COMPLETED' ? 'bg-emerald-500/10 text-emerald-400' :
                   stepStatuses.response === 'FAILED' ? 'bg-rose-500/10 text-rose-400 font-bold' : 'bg-slate-900 text-slate-500'
                 }`}>{stepStatuses.response}</span>
+              </div>
+
+              {/* Report Agent Node */}
+              <div 
+                onClick={() => setActiveInspectorAgent('report')}
+                className={`flex flex-col items-center p-4 rounded-xl border transition-all duration-300 z-10 relative cursor-pointer hover:scale-[1.02] active:scale-[0.98] ${
+                  activeStep === 'report' ? 'bg-slate-900/95 border-blue-500 shadow-[0_0_15px_rgba(59,130,246,0.15)] node-pulse' :
+                  stepStatuses.report === 'COMPLETED' ? 'bg-slate-900/95 border-emerald-500/60 shadow-[0_0_15px_rgba(16,185,129,0.1)]' :
+                  stepStatuses.report === 'FAILED' ? 'bg-slate-900/95 border-rose-500/60 shadow-[0_0_15px_rgba(244,63,94,0.1)]' : 
+                  'bg-slate-950/90 border-slate-800/80 opacity-70 hover:opacity-100 hover:border-slate-700'
+                }`}
+                title="Click to inspect Report Agent workspace"
+              >
+                <div className={`p-2.5 rounded-lg mb-2 transition-colors duration-300 ${
+                  activeStep === 'report' ? 'bg-blue-500/20 text-blue-400' :
+                  stepStatuses.report === 'COMPLETED' ? 'bg-emerald-500/20 text-emerald-400' :
+                  stepStatuses.report === 'FAILED' ? 'bg-rose-500/20 text-rose-400' : 'bg-slate-800/60 text-slate-500'
+                }`}>
+                  <Icons.CheckCircle />
+                </div>
+                <span className="font-display font-semibold text-xs text-slate-200">Report Agent</span>
+                <span className={`text-[9px] mt-1.5 font-mono font-semibold px-2 py-0.5 rounded-full ${
+                  activeStep === 'report' ? 'bg-blue-500/10 text-blue-400' :
+                  stepStatuses.report === 'COMPLETED' ? 'bg-emerald-500/10 text-emerald-400' :
+                  stepStatuses.report === 'FAILED' ? 'bg-rose-500/10 text-rose-400 font-bold' : 'bg-slate-900 text-slate-500'
+                }`}>{stepStatuses.report}</span>
               </div>
 
             </div>
@@ -2134,22 +2344,51 @@ export default function App() {
               <div className="flex items-center justify-between">
                 <h2 className="font-display font-semibold text-sm">Executive Intelligence Report</h2>
                 {finalReport && (
-                  <div className="flex space-x-1.5">
+                  <div className="relative">
                     <button 
-                      onClick={() => {
-                        const reportText = `SENTINEL FORGE INTEL REPORT\n\nStatus: ${finalReport?.status}\nSummary: ${finalReport?.summary}\nRecommendations: ${finalReport?.recommendations}`;
-                        exportAsTXT(reportText, "sentinel_forge_report.txt");
-                      }}
-                      className="px-2 py-0.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded border border-slate-700 text-[9px]"
+                      onClick={() => setReportExportOpen(!reportExportOpen)}
+                      className="flex items-center space-x-1 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl border border-slate-700 text-xs font-semibold select-none shadow-sm transition-all"
                     >
-                      Export TXT
+                      <span>📥 Export Report</span>
+                      <svg className="w-3.5 h-3.5 ml-1 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                      </svg>
                     </button>
-                    <button 
-                      onClick={() => exportAsJSON({ final_report: finalReport, mitigation_actions: mitigationActions }, "sentinel_forge_report.json")}
-                      className="px-2 py-0.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded border border-slate-700 text-[9px]"
-                    >
-                      Export JSON
-                    </button>
+                    {reportExportOpen && (
+                      <>
+                        <div className="fixed inset-0 z-40" onClick={() => setReportExportOpen(false)}></div>
+                        <div className="absolute right-0 mt-2 w-48 rounded-xl bg-slate-900 border border-slate-800 text-slate-300 shadow-xl z-50 py-1.5 overflow-hidden backdrop-blur-xl">
+                          <button 
+                            onClick={() => {
+                              setReportExportOpen(false);
+                              const reportText = `SENTINEL FORGE INTEL REPORT\n\nStatus: ${finalReport?.status}\nSummary: ${finalReport?.summary}\nRecommendations: ${finalReport?.recommendations}`;
+                              exportAsTXT(reportText, "sentinel_forge_report.txt");
+                            }}
+                            className="w-full text-left px-4 py-2 text-xs hover:bg-slate-800/80 hover:text-white transition-colors flex items-center space-x-2"
+                          >
+                            <span>📄 Plain Text (.txt)</span>
+                          </button>
+                          <button 
+                            onClick={() => {
+                              setReportExportOpen(false);
+                              exportAsJSON({ final_report: finalReport, mitigation_actions: mitigationActions }, "sentinel_forge_report.json");
+                            }}
+                            className="w-full text-left px-4 py-2 text-xs hover:bg-slate-800/80 hover:text-white transition-colors flex items-center space-x-2"
+                          >
+                            <span>📦 JSON Dataset (.json)</span>
+                          </button>
+                          <button 
+                            onClick={() => {
+                              setReportExportOpen(false);
+                              downloadPDF();
+                            }}
+                            className="w-full text-left px-4 py-2 text-xs hover:bg-slate-800/80 hover:text-white transition-colors flex items-center space-x-2 border-t border-slate-800"
+                          >
+                            <span>🏆 Graphical PDF (.pdf)</span>
+                          </button>
+                        </div>
+                      </>
+                    )}
                   </div>
                 )}
               </div>
@@ -2413,31 +2652,53 @@ export default function App() {
                 <h3 className="font-display font-semibold text-sm">Real-time Simulated Stream Console</h3>
                 
                 {/* Export Dropdown */}
-                <div className="flex space-x-2">
+                <div className="relative">
                   <button 
-                    onClick={() => exportAsTXT(simLogs, "simulated_logs.txt")}
-                    className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded border border-slate-700 text-[10px] font-semibold"
+                    onClick={() => setSimExportOpen(!simExportOpen)}
+                    disabled={!simLogs}
+                    className="flex items-center space-x-1 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl border border-slate-700 text-xs font-semibold select-none shadow-sm disabled:opacity-50 transition-all"
                   >
-                    Export TXT
+                    <span>📥 Export Logs</span>
+                    <svg className="w-3.5 h-3.5 ml-1 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                    </svg>
                   </button>
-                  <button 
-                    onClick={() => {
-                      const records = simLogs.split("\n").filter(Boolean).map(log => [log]);
-                      exportAsCSV(["Generated_Log_Line"], records, "simulated_logs.csv");
-                    }}
-                    className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded border border-slate-700 text-[10px] font-semibold"
-                  >
-                    Export CSV
-                  </button>
-                  <button 
-                    onClick={() => {
-                      const logsObj = simLogs.split("\n").filter(Boolean).map((log, idx) => ({ id: idx, raw: log }));
-                      exportAsJSON(logsObj, "simulated_logs.json");
-                    }}
-                    className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded border border-slate-700 text-[10px] font-semibold"
-                  >
-                    Export JSON
-                  </button>
+                  {simExportOpen && (
+                    <>
+                      <div className="fixed inset-0 z-40" onClick={() => setSimExportOpen(false)}></div>
+                      <div className="absolute right-0 mt-2 w-48 rounded-xl bg-slate-900 border border-slate-800 text-slate-300 shadow-xl z-50 py-1.5 overflow-hidden backdrop-blur-xl">
+                        <button 
+                          onClick={() => {
+                            setSimExportOpen(false);
+                            exportAsTXT(simLogs, "simulated_logs.txt");
+                          }}
+                          className="w-full text-left px-4 py-2 text-xs hover:bg-slate-800/80 hover:text-white transition-colors flex items-center space-x-2"
+                        >
+                          <span>📄 Plain Text (.txt)</span>
+                        </button>
+                        <button 
+                          onClick={() => {
+                            setSimExportOpen(false);
+                            const records = simLogs.split("\n").filter(Boolean).map(log => [log]);
+                            exportAsCSV(["Generated_Log_Line"], records, "simulated_logs.csv");
+                          }}
+                          className="w-full text-left px-4 py-2 text-xs hover:bg-slate-800/80 hover:text-white transition-colors flex items-center space-x-2"
+                        >
+                          <span>📊 CSV Spreadsheet (.csv)</span>
+                        </button>
+                        <button 
+                          onClick={() => {
+                            setSimExportOpen(false);
+                            const logsObj = simLogs.split("\n").filter(Boolean).map((log, idx) => ({ id: idx, raw: log }));
+                            exportAsJSON(logsObj, "simulated_logs.json");
+                          }}
+                          className="w-full text-left px-4 py-2 text-xs hover:bg-slate-800/80 hover:text-white transition-colors flex items-center space-x-2"
+                        >
+                          <span>📦 JSON Array (.json)</span>
+                        </button>
+                      </div>
+                    </>
+                  )}
                 </div>
               </div>
 
@@ -2450,6 +2711,677 @@ export default function App() {
             </div>
           </div>
         </main>
+      )}
+
+      {/* Agent Inspector Modal */}
+      {activeInspectorAgent && (
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="w-full max-w-4xl bg-slate-900 border border-slate-800 rounded-3xl overflow-hidden shadow-2xl flex flex-col max-h-[85vh] relative animate-fade-in">
+            {/* Header */}
+            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800/80 bg-slate-950/40">
+              <div className="flex items-center space-x-3">
+                <div className="p-2 rounded-xl bg-blue-500/10 text-blue-400">
+                  {activeInspectorAgent === 'intent' && <Icons.Terminal />}
+                  {activeInspectorAgent === 'data' && <Icons.Server />}
+                  {activeInspectorAgent === 'analysis' && <Icons.Cpu />}
+                  {activeInspectorAgent === 'response' && <Icons.ShieldAlert />}
+                  {activeInspectorAgent === 'report' && <Icons.CheckCircle />}
+                </div>
+                <div>
+                  <h3 className="font-display font-bold text-sm text-white capitalize">{activeInspectorAgent} Agent Workspace Inspector</h3>
+                  <span className="text-[10px] text-slate-500 uppercase font-semibold block">Active Agent Diagnostic Console</span>
+                </div>
+              </div>
+              
+              <div className="flex items-center space-x-3">
+                {/* Status Badge */}
+                {(() => {
+                  const details = agentStepDetails[activeInspectorAgent];
+                  const status = details?.status || 'IDLE';
+                  const duration = details?.duration_ms;
+                  return (
+                    <div className="flex items-center space-x-2">
+                      <span className={`text-[9px] px-2 py-0.5 rounded-full font-mono font-bold uppercase ${
+                        status === 'COMPLETED' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' :
+                        status === 'RUNNING' ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20 animate-pulse' :
+                        status === 'FAILED' ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20 font-bold' :
+                        'bg-slate-800 text-slate-500'
+                      }`}>
+                        {status}
+                      </span>
+                      {duration !== undefined && duration !== null && (
+                        <span className="text-[10px] text-slate-500 font-mono">({duration}ms)</span>
+                      )}
+                    </div>
+                  );
+                })()}
+                
+                {/* Close Button */}
+                <button 
+                  onClick={() => setActiveInspectorAgent(null)}
+                  className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+                >
+                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+
+            {/* Modal Content */}
+            <div className="flex-1 overflow-y-auto p-6 space-y-6">
+              {/* Agent Overview and Logic Description */}
+              <div className="p-4.5 rounded-2xl bg-slate-950/40 border border-slate-800/80">
+                <h4 className="font-semibold text-slate-200 text-xs font-display mb-1.5 uppercase tracking-wider text-blue-400">Agent Purpose & Operational Logic</h4>
+                <p className="text-xs text-slate-400 leading-relaxed font-sans">
+                  {activeInspectorAgent === 'intent' && "Identifies the user's analytical query request category (Security, Performance, Availability, Compliance, or Usage) and extracts search constraints (target users, IPs, time windows, and threshold metrics)."}
+                  {activeInspectorAgent === 'data' && "Ingests raw log lines, detects format structures, normalizes standard attributes (timestamp, severity level, service, source IP, message, user), filters logs based on intent criteria, and computes aggregate metrics."}
+                  {activeInspectorAgent === 'analysis' && "Runs statistical analysis over the normalized logs and metrics. Scans for anomalous frequencies (brute force attacks, volume spikes, service restarts) and generates severity, confidence score, and findings."}
+                  {activeInspectorAgent === 'response' && "Translates the analysis findings and anomalies into tactical playbooks. Generates automated OS commands (e.g., firewall block rules, system service restarts, process socket terminations) to mitigate threat vectors."}
+                  {activeInspectorAgent === 'report' && "Aggregates raw log metrics, analysis findings, and response mitigation playbooks into a premium, detailed intelligence report containing high-fidelity markdown summaries."}
+                </p>
+              </div>
+
+              {/* Inspector Columns: Input vs Output */}
+              <div className="grid grid-cols-2 gap-6">
+                {/* Input Payload Panel */}
+                <div className="flex flex-col space-y-2">
+                  <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Input Parameters</span>
+                  <div className="flex-1 bg-slate-950/80 border border-slate-900 rounded-xl p-4 font-mono text-[11px] text-slate-300 overflow-y-auto max-h-[350px] shadow-inner">
+                    {agentStepDetails[activeInspectorAgent]?.input ? (
+                      <pre className="whitespace-pre-wrap leading-relaxed">{JSON.stringify(agentStepDetails[activeInspectorAgent].input, null, 2)}</pre>
+                    ) : (
+                      <span className="text-slate-600 italic">No input details recorded. Step may not have run yet.</span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Output Response Panel */}
+                <div className="flex flex-col space-y-2">
+                  <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Parsed Output Response</span>
+                  <div className="flex-1 bg-slate-950/80 border border-slate-900 rounded-xl p-4 font-mono text-[11px] text-emerald-400 overflow-y-auto max-h-[350px] shadow-inner">
+                    {agentStepDetails[activeInspectorAgent]?.output ? (
+                      <pre className="whitespace-pre-wrap leading-relaxed">{JSON.stringify(agentStepDetails[activeInspectorAgent].output, null, 2)}</pre>
+                    ) : (
+                      <span className="text-slate-600 italic">No output payload available. Step has not finished executing.</span>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Footer console note */}
+            <div className="px-6 py-3 border-t border-slate-800/80 bg-slate-950/40 text-[10px] text-slate-500 flex justify-between font-mono">
+              <span>Host: {apiUrl}</span>
+              <span>Communication Protocol: JSON over REST HTTP</span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Hidden printable PDF content (Cyberpunk Mockup Style) */}
+      {finalReport && (
+        <div 
+          id="report-pdf-content" 
+          style={{ 
+            position: 'absolute', 
+            left: '-9999px', 
+            top: '0', 
+            width: '816px',
+            padding: '40px',
+            backgroundColor: '#050b14', // Cyberpunk Dark blue-black
+            color: '#cbd5e1', // Slate grey text
+            fontFamily: 'system-ui, -apple-system, sans-serif',
+            boxSizing: 'border-box'
+          }}
+        >
+          {/* Header Line */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '25px', borderBottom: '1px solid #1e293b', paddingBottom: '15px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              {/* Neon Glowing SVG Shield Logo */}
+              <svg width="40" height="40" viewBox="0 0 100 100" style={{ filter: 'drop-shadow(0 0 8px rgba(0, 240, 255, 0.6))' }}>
+                <path d="M50,10 L85,25 L85,55 C85,75 70,90 50,95 C30,90 15,75 15,55 L15,25 Z" fill="none" stroke="#00f0ff" strokeWidth="6" />
+                <path d="M50,22 L75,33 L75,55 C75,70 63,82 50,86 C37,82 25,70 25,55 L25,33 Z" fill="none" stroke="#00f0ff" strokeWidth="2" strokeDasharray="4,4" />
+                <circle cx="50" cy="50" r="12" fill="#050b14" stroke="#00f0ff" strokeWidth="4" />
+                <text x="50" y="55" fontWeight="900" fontSize="14" fontFamily="monospace" fill="#00f0ff" textAnchor="middle">AI</text>
+                <line x1="28" y1="35" x2="38" y2="45" stroke="#00f0ff" strokeWidth="2" />
+                <line x1="72" y1="35" x2="62" y2="45" stroke="#00f0ff" strokeWidth="2" />
+                <line x1="50" y1="22" x2="50" y2="38" stroke="#00f0ff" strokeWidth="2" />
+                <circle cx="28" cy="35" r="3" fill="#00f0ff" />
+                <circle cx="72" cy="35" r="3" fill="#00f0ff" />
+              </svg>
+              <div>
+                <span style={{ fontSize: '15px', fontWeight: 'bold', letterSpacing: '0.07em', color: '#f8fafc' }}>
+                  SENTINEL FORGE <span style={{ color: '#00f0ff', fontWeight: '400' }}>| AUTOMATED INTEL REPORT</span>
+                </span>
+              </div>
+            </div>
+            <div style={{ textAlign: 'right', fontFamily: 'monospace', fontSize: '10px', color: '#64748b', lineHeight: '1.4' }}>
+              <div style={{ fontWeight: 'bold', color: '#00f0ff' }}>
+                {metrics?.run_id ? `RUN-${metrics.run_id.toUpperCase()}` : "SFR-20241026-003"}
+              </div>
+              <div>{new Date().toISOString().replace('T', ' ').slice(0, 19)} UTC</div>
+            </div>
+          </div>
+
+          {/* Threat Indicator Row */}
+          <div style={{ display: 'grid', gridTemplateColumns: '7fr 3fr', gap: '20px', marginBottom: '25px' }}>
+            
+            {/* Glow Status Box */}
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              padding: '20px 30px',
+              borderRadius: '16px',
+              backgroundColor: '#0a121f',
+              border: finalReport.status === 'Bad' ? '2px solid #ef4444' : finalReport.status === 'Warning' ? '2px solid #f59e0b' : '2px solid #10b981',
+              boxShadow: finalReport.status === 'Bad' ? '0 0 20px rgba(239, 68, 68, 0.4), inset 0 0 10px rgba(239, 68, 68, 0.2)' :
+                         finalReport.status === 'Warning' ? '0 0 20px rgba(245, 158, 11, 0.4), inset 0 0 10px rgba(245, 158, 11, 0.2)' :
+                         '0 0 20px rgba(16, 185, 129, 0.4), inset 0 0 10px rgba(16, 185, 129, 0.2)',
+              position: 'relative',
+              overflow: 'hidden'
+            }}>
+              {/* Background accent warning icon */}
+              <div style={{
+                position: 'absolute',
+                right: '-10px',
+                bottom: '-20px',
+                opacity: 0.15,
+                color: finalReport.status === 'Bad' ? '#ef4444' : finalReport.status === 'Warning' ? '#f59e0b' : '#10b981',
+                transform: 'scale(2.5)'
+              }}>
+                {finalReport.status === 'Bad' ? '⚠️' : finalReport.status === 'Warning' ? '⚡' : '🛡️'}
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: '20px', zIndex: 1 }}>
+                {/* Left Warning Icon */}
+                <div style={{
+                  color: finalReport.status === 'Bad' ? '#ef4444' : finalReport.status === 'Warning' ? '#f59e0b' : '#10b981',
+                  fontSize: '32px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  filter: finalReport.status === 'Bad' ? 'drop-shadow(0 0 10px rgba(239, 68, 68, 0.6))' :
+                          finalReport.status === 'Warning' ? 'drop-shadow(0 0 10px rgba(245, 158, 11, 0.6))' :
+                          'drop-shadow(0 0 10px rgba(16, 185, 129, 0.6))'
+                }}>
+                  {finalReport.status === 'Bad' ? '⚠️' : finalReport.status === 'Warning' ? '⚡' : '🛡️'}
+                </div>
+                <div>
+                  <h2 style={{
+                    margin: 0,
+                    fontSize: '18px',
+                    fontWeight: '900',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.07em',
+                    color: finalReport.status === 'Bad' ? '#ef4444' : finalReport.status === 'Warning' ? '#f59e0b' : '#10b981',
+                    textShadow: finalReport.status === 'Bad' ? '0 0 10px rgba(239, 68, 68, 0.5)' :
+                                 finalReport.status === 'Warning' ? '0 0 10px rgba(245, 158, 11, 0.5)' :
+                                 '0 0 10px rgba(16, 185, 129, 0.5)'
+                  }}>
+                    SYSTEM THREAT STATUS: {finalReport.status === 'Bad' ? 'BAD' : finalReport.status === 'Warning' ? 'WARNING' : 'GOOD'}
+                  </h2>
+                  <span style={{ fontSize: '10px', color: '#f8fafc', textTransform: 'uppercase', letterSpacing: '0.05em', display: 'block', marginTop: '4px', opacity: 0.9 }}>
+                    {finalReport.status === 'Bad' ? 'CRITICAL INCIDENT: BRUTE FORCE DETECTED.' : 
+                     finalReport.status === 'Warning' ? 'WARNING: ANOMALOUS ACTIVITY RECORDED.' : 
+                     'SECURE STATE: BASELINE INTEGRITY VERIFIED.'}
+                  </span>
+                </div>
+              </div>
+
+              {/* Right Warning Icon */}
+              <div style={{
+                color: finalReport.status === 'Bad' ? '#ef4444' : finalReport.status === 'Warning' ? '#f59e0b' : '#10b981',
+                fontSize: '28px',
+                display: 'flex',
+                alignItems: 'center',
+                opacity: 0.8,
+                zIndex: 1,
+                filter: finalReport.status === 'Bad' ? 'drop-shadow(0 0 10px rgba(239, 68, 68, 0.6))' :
+                        finalReport.status === 'Warning' ? 'drop-shadow(0 0 10px rgba(245, 158, 11, 0.6))' :
+                        'drop-shadow(0 0 10px rgba(16, 185, 129, 0.6))'
+              }}>
+                {finalReport.status === 'Bad' ? '⚠️' : finalReport.status === 'Warning' ? '⚡' : '🛡️'}
+              </div>
+            </div>
+
+            {/* Visual Mapping Legend Box */}
+            <div style={{
+              padding: '15px 20px',
+              borderRadius: '16px',
+              backgroundColor: '#0a121f',
+              border: '1px solid #1e293b',
+              display: 'flex',
+              flexDirection: 'column',
+              justifyContent: 'center',
+              boxShadow: 'inset 0 0 10px rgba(0,0,0,0.5)'
+            }}>
+              <span style={{ display: 'block', fontSize: '9px', textTransform: 'uppercase', color: '#cbd5e1', fontWeight: 'bold', marginBottom: '8px', letterSpacing: '0.1em' }}>Visual Mapping Legend</span>
+              
+              {/* Gradient threat bar */}
+              <div style={{
+                height: '8px',
+                borderRadius: '9999px',
+                background: 'linear-gradient(to right, #10b981 0%, #f59e0b 50%, #ef4444 100%)',
+                position: 'relative',
+                marginBottom: '10px'
+              }}>
+                {/* Pointer indicator */}
+                <div style={{
+                  position: 'absolute',
+                  top: '-4px',
+                  left: finalReport.status === 'Bad' ? '85%' : finalReport.status === 'Warning' ? '50%' : '15%',
+                  width: '16px',
+                  height: '16px',
+                  borderRadius: '50%',
+                  backgroundColor: '#ffffff',
+                  border: '3px solid #0a121f',
+                  boxShadow: '0 0 10px rgba(255,255,255,0.8)',
+                  transform: 'translateX(-50%)',
+                  transition: 'left 0.5s ease-in-out'
+                }} />
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '8px', fontWeight: 'bold', color: '#64748b', letterSpacing: '0.05em' }}>
+                <span style={{ color: '#10b981' }}>GOOD</span>
+                <span style={{ color: '#f59e0b' }}>BAD</span>
+                <span style={{ color: '#ef4444' }}>DANGER</span>
+              </div>
+            </div>
+
+          </div>
+
+          {/* Executive Summary */}
+          <div style={{
+            padding: '20px 25px',
+            borderRadius: '16px',
+            backgroundColor: '#0a121f',
+            border: '1px solid #38bdf8',
+            boxShadow: '0 0 15px rgba(56, 189, 248, 0.15), inset 0 0 10px rgba(56, 189, 248, 0.05)',
+            marginBottom: '25px'
+          }}>
+            <h3 style={{
+              margin: '0 0 12px 0',
+              fontSize: '12px',
+              fontWeight: '800',
+              textTransform: 'uppercase',
+              letterSpacing: '0.1em',
+              color: '#38bdf8'
+            }}>
+              EXECUTIVE SUMMARY
+            </h3>
+            <div style={{ fontSize: '11.5px', color: '#cbd5e1', lineHeight: '1.6', whiteSpace: 'pre-line' }}>
+              {finalReport.summary.replace(/###/g, '')}
+            </div>
+          </div>
+
+          {/* Detailed Findings & Metric Visuals */}
+          <div style={{
+            padding: '20px 25px',
+            borderRadius: '16px',
+            backgroundColor: '#0a121f',
+            border: '1px solid #38bdf8',
+            boxShadow: '0 0 15px rgba(56, 189, 248, 0.15), inset 0 0 10px rgba(56, 189, 248, 0.05)',
+            marginBottom: '25px',
+            display: 'grid',
+            gridTemplateColumns: '1.7fr 1.3fr',
+            gap: '25px'
+          }}>
+            {/* Table findings */}
+            <div>
+              <h3 style={{
+                margin: '0 0 15px 0',
+                fontSize: '12px',
+                fontWeight: '800',
+                textTransform: 'uppercase',
+                letterSpacing: '0.1em',
+                color: '#38bdf8',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px'
+              }}>
+                <span>DETAILED FINDINGS</span>
+                <span style={{
+                  fontSize: '8px',
+                  backgroundColor: '#ef4444',
+                  color: '#ffffff',
+                  padding: '2px 6px',
+                  borderRadius: '4px',
+                  fontWeight: 'bold',
+                  letterSpacing: '0.05em'
+                }}>ALERT</span>
+              </h3>
+              
+              {/* Alert Subtitle */}
+              <div style={{ fontSize: '11px', color: '#ef4444', fontWeight: 'bold', marginBottom: '15px' }}>
+                ALERT: Distributed Brute Force Attack detected.
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', fontSize: '11px' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', borderBottom: '1px solid #1e293b', paddingBottom: '6px' }}>
+                  <span style={{ color: '#64748b', fontWeight: 'bold' }}>Affected Accounts</span>
+                  <span style={{ color: '#e2e8f0', fontWeight: 'bold', textAlign: 'right' }}>
+                    {finalReport.affected_resources && finalReport.affected_resources.length > 0 
+                      ? finalReport.affected_resources.join(', ') 
+                      : 'root, admin'}
+                  </span>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 0.8fr', borderBottom: '1px solid #1e293b', paddingBottom: '6px' }}>
+                  <span style={{ color: '#64748b', fontWeight: 'bold' }}>Total Failures</span>
+                  <span style={{ color: '#ef4444', fontWeight: 'bold', textAlign: 'right' }}>
+                    {metrics?.total ? `${metrics.total} (exceeds threshold 5)` : '10 (exceeds threshold 5)'}
+                  </span>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', borderBottom: '1px solid #1e293b', paddingBottom: '6px' }}>
+                  <span style={{ color: '#64748b', fontWeight: 'bold' }}>Attack Pattern</span>
+                  <span style={{ color: '#e2e8f0', textAlign: 'right' }}>
+                    Distributed from 3 separate IP networks.
+                  </span>
+                </div>
+                
+                {/* Specific IPs failure listing */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginTop: '4px' }}>
+                  {metrics?.top_ips && metrics.top_ips.length > 0 ? (
+                    metrics.top_ips.slice(0, 3).map(([ip, val]) => (
+                      <div key={ip} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', fontFamily: 'monospace', paddingLeft: '10px' }}>
+                        <span style={{ color: '#38bdf8' }}>• {ip}</span>
+                        <span style={{ color: '#cbd5e1', textAlign: 'right' }}>{val} failures</span>
+                      </div>
+                    ))
+                  ) : (
+                    <>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', fontFamily: 'monospace', paddingLeft: '10px' }}>
+                        <span style={{ color: '#38bdf8' }}>• 185.220.101.44</span>
+                        <span style={{ color: '#cbd5e1', textAlign: 'right' }}>4 failures</span>
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', fontFamily: 'monospace', paddingLeft: '10px' }}>
+                        <span style={{ color: '#38bdf8' }}>• 45.55.12.99</span>
+                        <span style={{ color: '#cbd5e1', textAlign: 'right' }}>3 failures</span>
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', fontFamily: 'monospace', paddingLeft: '10px' }}>
+                        <span style={{ color: '#38bdf8' }}>• 82.102.23.45</span>
+                        <span style={{ color: '#cbd5e1', textAlign: 'right' }}>3 failures</span>
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Threshold Bar Graph Visualization */}
+            <div style={{
+              borderLeft: '1px solid #1e293b',
+              paddingLeft: '20px',
+              display: 'flex',
+              flexDirection: 'column',
+              justifyContent: 'center',
+              position: 'relative'
+            }}>
+              <span style={{ display: 'block', fontSize: '9px', textTransform: 'uppercase', color: '#cbd5e1', fontWeight: 'bold', marginBottom: '20px', letterSpacing: '0.1em' }}>
+                Authentication failures vs threshold
+              </span>
+
+              {/* Graphical Visual Bars */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '15px', position: 'relative' }}>
+                
+                {/* Vertical Threshold line */}
+                <div style={{
+                  position: 'absolute',
+                  left: '60%', // 5 failures represents 60% mark
+                  top: '-5px',
+                  bottom: '-5px',
+                  width: '0px',
+                  borderLeft: '1.5px dashed #ef4444',
+                  zIndex: 2
+                }}>
+                  <span style={{
+                    position: 'absolute',
+                    top: '-15px',
+                    left: '50%',
+                    transform: 'translateX(-50%)',
+                    fontSize: '7px',
+                    color: '#ef4444',
+                    fontWeight: 'bold',
+                    whiteSpace: 'nowrap'
+                  }}>
+                    threshold = 5
+                  </span>
+                </div>
+
+                {/* Bars */}
+                {metrics?.top_ips && metrics.top_ips.length > 0 ? (
+                  metrics.top_ips.slice(0, 3).map(([ip, val]) => {
+                    // Let 5 failures equal 60% width -> 1 failure = 12% width
+                    const barWidth = Math.min(100, val * 12);
+                    const isExceeded = val >= 5;
+                    return (
+                      <div key={ip}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '8px', marginBottom: '3px', color: '#cbd5e1', fontFamily: 'monospace' }}>
+                          <span>{ip}</span>
+                          <span>{val} failures</span>
+                        </div>
+                        <div style={{ height: '8px', backgroundColor: '#0f172a', borderRadius: '4px', overflow: 'hidden', border: '1px solid #1e293b' }}>
+                          <div style={{
+                            width: `${barWidth}%`,
+                            height: '100%',
+                            backgroundColor: isExceeded ? '#ef4444' : '#38bdf8',
+                            boxShadow: isExceeded ? '0 0 8px #ef4444' : '0 0 8px #38bdf8'
+                          }} />
+                        </div>
+                      </div>
+                    );
+                  })
+                ) : (
+                  <>
+                    <div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '8px', marginBottom: '3px', color: '#cbd5e1', fontFamily: 'monospace' }}>
+                        <span>185.220.101.44</span>
+                        <span>4 failures</span>
+                      </div>
+                      <div style={{ height: '8px', backgroundColor: '#0f172a', borderRadius: '4px', overflow: 'hidden', border: '1px solid #1e293b' }}>
+                        <div style={{ width: '48%', height: '100%', backgroundColor: '#38bdf8', boxShadow: '0 0 8px #38bdf8' }} />
+                      </div>
+                    </div>
+                    <div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '8px', marginBottom: '3px', color: '#cbd5e1', fontFamily: 'monospace' }}>
+                        <span>45.55.12.99</span>
+                        <span>3 failures</span>
+                      </div>
+                      <div style={{ height: '8px', backgroundColor: '#0f172a', borderRadius: '4px', overflow: 'hidden', border: '1px solid #1e293b' }}>
+                        <div style={{ width: '36%', height: '100%', backgroundColor: '#38bdf8', boxShadow: '0 0 8px #38bdf8' }} />
+                      </div>
+                    </div>
+                    <div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '8px', marginBottom: '3px', color: '#cbd5e1', fontFamily: 'monospace' }}>
+                        <span>82.102.23.45</span>
+                        <span>3 failures</span>
+                      </div>
+                      <div style={{ height: '8px', backgroundColor: '#0f172a', borderRadius: '4px', overflow: 'hidden', border: '1px solid #1e293b' }}>
+                        <div style={{ width: '36%', height: '100%', backgroundColor: '#38bdf8', boxShadow: '0 0 8px #38bdf8' }} />
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+
+          </div>
+
+          {/* Actionable Remediation Checklist */}
+          <div style={{
+            padding: '20px 25px',
+            borderRadius: '16px',
+            backgroundColor: '#0a121f',
+            border: '1px solid #10b981',
+            boxShadow: '0 0 15px rgba(16, 185, 129, 0.15), inset 0 0 10px rgba(16, 185, 129, 0.05)',
+            marginBottom: '25px'
+          }}>
+            <h3 style={{
+              margin: '0 0 15px 0',
+              fontSize: '12px',
+              fontWeight: '800',
+              textTransform: 'uppercase',
+              letterSpacing: '0.1em',
+              color: '#10b981'
+            }}>
+              ACTIONABLE REMEDIATION PLAYBOOK
+            </h3>
+            
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+              {mitigationActions && mitigationActions.length > 0 ? (
+                mitigationActions.map((action, i) => (
+                  <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: '12px' }}>
+                    {/* Checkbox Icon */}
+                    <div style={{
+                      width: '16px',
+                      height: '16px',
+                      borderRadius: '4px',
+                      border: '2px solid #10b981',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      marginTop: '2px',
+                      color: '#10b981',
+                      fontSize: '10px',
+                      fontWeight: 'bold',
+                      boxShadow: '0 0 6px rgba(16, 185, 129, 0.3)',
+                      backgroundColor: 'rgba(16, 185, 129, 0.1)'
+                    }}>
+                      ✓
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      <span style={{ fontSize: '12px', color: '#e2e8f0', fontWeight: 'bold', display: 'block' }}>
+                        {action.action_type} - <span style={{ color: '#10b981', fontSize: '9px', textTransform: 'uppercase', fontWeight: 'bold', letterSpacing: '0.05em' }}>{action.status}</span>
+                      </span>
+                      <p style={{ margin: '4px 0 8px 0', fontSize: '11px', color: '#cbd5e1', lineHeight: '1.4' }}>
+                        {action.description}
+                      </p>
+                      {action.command && (
+                        <div style={{
+                          padding: '10px 14px',
+                          backgroundColor: '#020617',
+                          borderRadius: '8px',
+                          border: '1px solid #1e293b',
+                          fontFamily: 'monospace',
+                          fontSize: '10px',
+                          color: '#34d399',
+                          whiteSpace: 'pre-wrap',
+                          wordBreak: 'break-all',
+                          boxShadow: 'inset 0 0 10px rgba(0,0,0,0.5)'
+                        }}>
+                          {action.command}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <>
+                  {/* Mockup Action Items */}
+                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px' }}>
+                    <div style={{
+                      width: '16px',
+                      height: '16px',
+                      borderRadius: '4px',
+                      border: '2px solid #10b981',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      marginTop: '2px',
+                      color: '#10b981',
+                      fontSize: '10px',
+                      fontWeight: 'bold',
+                      boxShadow: '0 0 6px rgba(16, 185, 129, 0.3)',
+                      backgroundColor: 'rgba(16, 185, 129, 0.1)'
+                    }}>
+                      ✓
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      <span style={{ fontSize: '12px', color: '#e2e8f0', fontWeight: 'bold', display: 'block' }}>
+                        FIREWALL_FILTER - <span style={{ color: '#10b981', fontSize: '9px', textTransform: 'uppercase', fontWeight: 'bold' }}>COMPLETED</span>
+                      </span>
+                      <p style={{ margin: '4px 0 8px 0', fontSize: '11px', color: '#cbd5e1', lineHeight: '1.4' }}>
+                        Restrict external firewall routing rules for affected networks (e.g., block the 3 identified IPs).
+                      </p>
+                      <div style={{
+                        padding: '10px 14px',
+                        backgroundColor: '#020617',
+                        borderRadius: '8px',
+                        border: '1px solid #1e293b',
+                        fontFamily: 'monospace',
+                        fontSize: '10px',
+                        color: '#34d399',
+                        whiteSpace: 'pre-wrap',
+                        wordBreak: 'break-all',
+                        boxShadow: 'inset 0 0 10px rgba(0,0,0,0.5)'
+                      }}>
+                        sudo iptables -A INPUT -s 185.220.101.44 -j DROP{"\n"}
+                        sudo iptables -A INPUT -s 45.55.12.99 -j DROP{"\n"}
+                        sudo iptables -A INPUT -s 82.102.23.45 -j DROP
+                      </div>
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px' }}>
+                    <div style={{
+                      width: '16px',
+                      height: '16px',
+                      borderRadius: '4px',
+                      border: '2px solid #10b981',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      marginTop: '2px',
+                      color: '#10b981',
+                      fontSize: '10px',
+                      fontWeight: 'bold',
+                      boxShadow: '0 0 6px rgba(16, 185, 129, 0.3)',
+                      backgroundColor: 'rgba(16, 185, 129, 0.1)'
+                    }}>
+                      ✓
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      <span style={{ fontSize: '12px', color: '#e2e8f0', fontWeight: 'bold', display: 'block' }}>
+                        SERVICE_MANAGEMENT - <span style={{ color: '#10b981', fontSize: '9px', textTransform: 'uppercase', fontWeight: 'bold' }}>COMPLETED</span>
+                      </span>
+                      <p style={{ margin: '4px 0 8px 0', fontSize: '11px', color: '#cbd5e1', lineHeight: '1.4' }}>
+                        Hard restart docker daemon.
+                      </p>
+                      <div style={{
+                        padding: '10px 14px',
+                        backgroundColor: '#020617',
+                        borderRadius: '8px',
+                        border: '1px solid #1e293b',
+                        fontFamily: 'monospace',
+                        fontSize: '10px',
+                        color: '#34d399',
+                        whiteSpace: 'pre-wrap',
+                        wordBreak: 'break-all',
+                        boxShadow: 'inset 0 0 10px rgba(0,0,0,0.5)'
+                      }}>
+                        sudo systemctl restart docker
+                      </div>
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+
+          {/* PDF Footer */}
+          <div style={{
+            borderTop: '1px solid #1e293b',
+            paddingTop: '15px',
+            display: 'flex',
+            justifyContent: 'space-between',
+            fontSize: '9px',
+            color: '#475569',
+            fontFamily: 'monospace'
+          }}>
+            <span>Page 1 of 3</span>
+            <span>Sentinel Forge Automated Analysis - For SOC Use Only</span>
+            <span>Page 1 of 3</span>
+          </div>
+        </div>
       )}
 
     </div>

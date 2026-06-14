@@ -391,7 +391,36 @@ async def run_orchestration_pipeline(run_id: str, request: OrchestratorRequest):
             yield await sse_event("pipeline_failed", {"agent": "ANALYSIS", "error": str(e)})
             return
 
-        # ---- STEP 4: Report Agent ----
+        # ---- STEP 4: Response Agent ----
+        response_step_id = uuid.uuid4().hex[:8]
+        yield await sse_event("response_started", {"step_id": response_step_id})
+        start_time = datetime.utcnow()
+        
+        response_obj = None
+        try:
+            response_payload = {
+                "analysis_result": analysis_obj,
+                "metrics": data_obj.get("metrics"),
+                "provider": request.provider,
+                "model": request.model,
+                "api_key": request.api_key,
+                "api_base_url": request.api_base_url
+            }
+            resp = await client.post(f"{RESPONSE_URL}/mitigate-incident", json=response_payload)
+            resp.raise_for_status()
+            response_obj = resp.json()
+            
+            duration = int((datetime.utcnow() - start_time).total_seconds() * 1000)
+            save_step(response_step_id, run_id, "RESPONSE", json.dumps(response_payload), json.dumps(response_obj), "COMPLETED", duration)
+            yield await sse_event("response_completed", {"step_id": response_step_id, "output": response_obj, "duration_ms": duration})
+        except Exception as e:
+            duration = int((datetime.utcnow() - start_time).total_seconds() * 1000)
+            save_step(response_step_id, run_id, "RESPONSE", json.dumps(analysis_obj), str(e), "FAILED", duration)
+            save_run(run_id, request.prompt, request.log_format, "FAILED")
+            yield await sse_event("pipeline_failed", {"agent": "RESPONSE", "error": str(e)})
+            return
+
+        # ---- STEP 5: Report Agent ----
         report_step_id = uuid.uuid4().hex[:8]
         yield await sse_event("report_started", {"step_id": report_step_id})
         start_time = datetime.utcnow()
@@ -401,6 +430,7 @@ async def run_orchestration_pipeline(run_id: str, request: OrchestratorRequest):
             report_payload = {
                 "intent": intent_obj,
                 "analysis_result": analysis_obj,
+                "mitigation_actions": response_obj.get("mitigation_actions", []),
                 "metrics": data_obj.get("metrics"),
                 "provider": request.provider,
                 "model": request.model,
@@ -419,35 +449,6 @@ async def run_orchestration_pipeline(run_id: str, request: OrchestratorRequest):
             save_step(report_step_id, run_id, "REPORT", json.dumps(analysis_obj), str(e), "FAILED", duration)
             save_run(run_id, request.prompt, request.log_format, "FAILED")
             yield await sse_event("pipeline_failed", {"agent": "REPORT", "error": str(e)})
-            return
-
-        # ---- STEP 5: Response Agent ----
-        response_step_id = uuid.uuid4().hex[:8]
-        yield await sse_event("response_started", {"step_id": response_step_id})
-        start_time = datetime.utcnow()
-        
-        response_obj = None
-        try:
-            response_payload = {
-                "final_report": report_obj,
-                "metrics": data_obj.get("metrics"),
-                "provider": request.provider,
-                "model": request.model,
-                "api_key": request.api_key,
-                "api_base_url": request.api_base_url
-            }
-            resp = await client.post(f"{RESPONSE_URL}/mitigate-incident", json=response_payload)
-            resp.raise_for_status()
-            response_obj = resp.json()
-            
-            duration = int((datetime.utcnow() - start_time).total_seconds() * 1000)
-            save_step(response_step_id, run_id, "RESPONSE", json.dumps(response_payload), json.dumps(response_obj), "COMPLETED", duration)
-            yield await sse_event("response_completed", {"step_id": response_step_id, "output": response_obj, "duration_ms": duration})
-        except Exception as e:
-            duration = int((datetime.utcnow() - start_time).total_seconds() * 1000)
-            save_step(response_step_id, run_id, "RESPONSE", json.dumps(report_obj), str(e), "FAILED", duration)
-            save_run(run_id, request.prompt, request.log_format, "FAILED")
-            yield await sse_event("pipeline_failed", {"agent": "RESPONSE", "error": str(e)})
             return
 
     save_run(run_id, request.prompt, request.log_format, "COMPLETED")

@@ -470,7 +470,12 @@ def apply_filters(logs: List[NormalizedLog], intent: IntentObject) -> List[Norma
         if match:
             val, unit = int(match.group(1)), match.group(2)
             delta_map = {"s": "seconds", "m": "minutes", "h": "hours", "d": "days"}
-            cutoff_time = datetime.utcnow() - timedelta(**{delta_map[unit]: val})
+            ref_time = datetime.utcnow()
+            if logs:
+                log_times = [log.timestamp for log in logs if log.timestamp]
+                if log_times:
+                    ref_time = max(log_times)
+            cutoff_time = ref_time - timedelta(**{delta_map[unit]: val})
 
     for log in logs:
         if cutoff_time and log.timestamp < cutoff_time:
@@ -511,6 +516,21 @@ def compute_metrics(all_logs: List[NormalizedLog], filtered_logs: List[Normalize
         if l.user:
             user_dist[l.user] = user_dist.get(l.user, 0) + 1
 
+    # Calculate log recency: if latest log is within 1 hour of current UTC time, it is recent.
+    max_log_time = None
+    if filtered_logs:
+        max_log_time = max(l.timestamp for l in filtered_logs if l.timestamp)
+    elif all_logs:
+        max_log_time = max(l.timestamp for l in all_logs if l.timestamp)
+
+    recency = "unknown"
+    if max_log_time:
+        time_diff = datetime.utcnow() - max_log_time
+        if abs(time_diff.total_seconds()) < 3600:
+            recency = "recent (real-time stream)"
+        else:
+            recency = "historical (past logs archive)"
+
     return {
         "total_records": len(all_logs),
         "filtered_records": len(filtered_logs),
@@ -521,6 +541,7 @@ def compute_metrics(all_logs: List[NormalizedLog], filtered_logs: List[Normalize
         "services": services,
         "level_distribution": level_dist,
         "user_distribution": dict(sorted(user_dist.items(), key=lambda x: x[1], reverse=True)[:10]),
+        "log_recency": recency
     }
 
 # ---------------------------------------------------------------------------

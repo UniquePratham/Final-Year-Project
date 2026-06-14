@@ -68,3 +68,33 @@ def test_analyze_intent_fallback_detects_class(monkeypatch):
     data = response.json()
     assert data["intent_class"] == "Performance"
 
+
+def test_analyze_intent_multilingual_translation(monkeypatch):
+    calls = []
+    def mock_generate(self, prompt, **kwargs):
+        calls.append(prompt)
+        if "Query to translate" in prompt:
+            return "Detect login failures from IP 185.220.101.44"
+        return """
+        {
+          "intent_class": "Security",
+          "entities": {"ip_address": "185.220.101.44", "user": null, "resource": null},
+          "conditions": {"threshold": 5, "time_window": "5m"},
+          "raw_prompt": "Detect login failures from IP 185.220.101.44"
+        }
+        """
+
+    monkeypatch.setattr(AIAdapter, "generate", mock_generate)
+
+    # Hinglish prompt that starts with a non-English verb, triggering translation
+    response = client.post(
+        "/analyze-intent",
+        json={"prompt": "bruteforce attack detect karo 185.220.101.44 se"}
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["intent_class"] == "Security"
+    assert len(calls) == 2
+    assert "Query to translate" in calls[0]
+
+

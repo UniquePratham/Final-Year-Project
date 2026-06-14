@@ -99,7 +99,33 @@ async def analyze_intent(request: IntentRequest):
     
     try:
         adapter = AIAdapter(provider=provider, model=model, api_key=request.api_key, base_url=request.api_base_url)
-        full_prompt = f"{FEW_SHOT_EXAMPLES}\n\nPrompt: \"{request.prompt}\"\nContext: {request.context or 'None'}\nResult:"
+        
+        # Multilingual & Hinglish Support: Detect if prompt needs translation to English
+        is_english = True
+        if any(ord(char) > 127 for char in request.prompt):
+            is_english = False
+        else:
+            common_eng_starts = ("detect", "check", "find", "search", "show", "analyze", "audit", "get", "list", "query", "is", "are", "what", "how", "who", "where", "when", "why")
+            words = request.prompt.lower().split()
+            if words and not words[0].startswith(common_eng_starts):
+                is_english = False
+
+        translated_prompt = request.prompt
+        if not is_english:
+            try:
+                translation_system = "You are a translation assistant. Translate the user's input query into clear, concise English for a security log analysis tool. Output ONLY the English translation. Do not explain, do not add introductory text, do not put it in quotes."
+                res = adapter.generate(
+                    prompt=f"Query to translate: {request.prompt}",
+                    system_instruction=translation_system,
+                    temperature=0.1
+                )
+                if res and res.strip():
+                    translated_prompt = res.strip().strip('"').strip("'").strip()
+                    logger.info(f"Translated query: '{request.prompt}' -> '{translated_prompt}'")
+            except Exception as e:
+                logger.warning(f"Translation failed: {e}. Falling back to original prompt.")
+
+        full_prompt = f"{FEW_SHOT_EXAMPLES}\n\nPrompt: \"{translated_prompt}\"\nContext: {request.context or 'None'}\nResult:"
         
         response_text = adapter.generate(prompt=full_prompt, system_instruction=SYSTEM_INSTRUCTION, temperature=0.1)
         
