@@ -2239,11 +2239,19 @@ export default function App() {
           
           {/* Natural Language Prompt Intent */}
           <div className="p-5 rounded-2xl glassmorphism flex flex-col space-y-4">
-            <div className="flex items-center space-x-2">
-              <div className="p-1.5 bg-blue-500/10 text-blue-400 rounded-lg">
-                <Icons.Terminal />
+            <div className="flex items-center justify-between">
+              <div className="flex items-center space-x-2">
+                <div className="p-1.5 bg-blue-500/10 text-blue-400 rounded-lg">
+                  <Icons.Terminal />
+                </div>
+                <h2 className="font-display font-semibold text-sm">Define Intent Analysis Prompt</h2>
               </div>
-              <h2 className="font-display font-semibold text-sm">Define Intent Analysis Prompt</h2>
+              <button
+                onClick={() => setPrompt("")}
+                className="px-2.5 py-1 text-[10px] font-semibold text-slate-400 hover:text-slate-200 bg-slate-800/40 hover:bg-slate-800/80 rounded-md border border-slate-700/50 transition-all active:scale-[0.98]"
+              >
+                Clear
+              </button>
             </div>
             
             <textarea 
@@ -2277,22 +2285,30 @@ export default function App() {
                 <h2 className="font-display font-semibold text-sm">Log Dataset Workspace</h2>
               </div>
               
-              <select 
-                value={logFormat}
-                onChange={e => setLogFormat(e.target.value)}
-                className="bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1 text-[10px] text-slate-400 outline-none cursor-pointer hover:border-slate-700"
-              >
-                <option value="Syslog">Syslog RFC 3164</option>
-                <option value="Windows Event Logs">Windows Event</option>
-                <option value="Nginx">Nginx Logs</option>
-                <option value="Apache">Apache Logs</option>
-                <option value="Linux Auth Logs">Linux Auth</option>
-                <option value="Firewall Logs">Firewall Logs</option>
-                <option value="JSON">JSON Loglines</option>
-                <option value="CSV">CSV Comma Separated</option>
-                <option value="XML">XML Structured</option>
-                <option value="TXT">Plain TXT</option>
-              </select>
+              <div className="flex items-center space-x-2">
+                <select 
+                  value={logFormat}
+                  onChange={e => setLogFormat(e.target.value)}
+                  className="bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1 text-[10px] text-slate-400 outline-none cursor-pointer hover:border-slate-700"
+                >
+                  <option value="Syslog">Syslog RFC 3164</option>
+                  <option value="Windows Event Logs">Windows Event</option>
+                  <option value="Nginx">Nginx Logs</option>
+                  <option value="Apache">Apache Logs</option>
+                  <option value="Linux Auth Logs">Linux Auth</option>
+                  <option value="Firewall Logs">Firewall Logs</option>
+                  <option value="JSON">JSON Loglines</option>
+                  <option value="CSV">CSV Comma Separated</option>
+                  <option value="XML">XML Structured</option>
+                  <option value="TXT">Plain TXT</option>
+                </select>
+                <button
+                  onClick={() => setLogs("")}
+                  className="px-2.5 py-1 text-[10px] font-semibold text-slate-400 hover:text-slate-200 bg-slate-800/40 hover:bg-slate-800/80 rounded-md border border-slate-700/50 transition-all active:scale-[0.98]"
+                >
+                  Clear
+                </button>
+              </div>
             </div>
 
             {/* Offline Ingestion Layout */}
@@ -2458,7 +2474,32 @@ export default function App() {
           
           {/* Agent Visual Trace Graph */}
           <div className="p-5 rounded-2xl glassmorphism flex flex-col space-y-4">
-            <h2 className="font-display font-semibold text-sm">Agent Communication & Workflow Visualizer</h2>
+            <div className="flex items-center justify-between">
+              <h2 className="font-display font-semibold text-sm">Agent Communication & Workflow Visualizer</h2>
+              <button
+                onClick={() => {
+                  setStepStatuses({
+                    intent: 'IDLE',
+                    data: 'IDLE',
+                    analysis: 'IDLE',
+                    report: 'IDLE',
+                    response: 'IDLE'
+                  });
+                  setActiveStep(null);
+                  setAgentStepDetails({
+                    intent: null,
+                    data: null,
+                    analysis: null,
+                    response: null,
+                    report: null
+                  });
+                  setActiveInspectorAgent(null);
+                }}
+                className="px-2.5 py-1 text-[10px] font-semibold text-slate-400 hover:text-slate-200 bg-slate-800/40 hover:bg-slate-800/80 rounded-md border border-slate-700/50 transition-all active:scale-[0.98]"
+              >
+                Clear
+              </button>
+            </div>
             
             <div className="grid grid-cols-5 gap-4 relative py-3 items-center">
               
@@ -2637,12 +2678,20 @@ export default function App() {
             <div className="p-5 rounded-2xl glassmorphism flex flex-col space-y-4 overflow-hidden shadow-2xl relative">
               <div className="flex items-center justify-between">
                 <h2 className="font-display font-semibold text-sm">Real-time Agent Workflow Tracing</h2>
-                {isPolling && (
-                  <span className="flex items-center text-[9px] text-blue-400 font-semibold bg-blue-500/10 px-2 py-0.5 rounded-full border border-blue-500/20 animate-pulse">
-                    <Icons.Refresh />
-                    <span>Ingesting Logs</span>
-                  </span>
-                )}
+                <div className="flex items-center space-x-2">
+                  {isPolling && (
+                    <span className="flex items-center text-[9px] text-blue-400 font-semibold bg-blue-500/10 px-2 py-0.5 rounded-full border border-blue-500/20 animate-pulse">
+                      <Icons.Refresh />
+                      <span>Ingesting Logs</span>
+                    </span>
+                  )}
+                  <button
+                    onClick={() => setConsoleLogs([])}
+                    className="px-2.5 py-1 text-[10px] font-semibold text-slate-400 hover:text-slate-200 bg-slate-800/40 hover:bg-slate-800/80 rounded-md border border-slate-700/50 transition-all active:scale-[0.98]"
+                  >
+                    Clear
+                  </button>
+                </div>
               </div>
               <div className="flex-1 bg-slate-950/80 border border-slate-800/80 rounded-xl p-4 font-mono text-[10px] overflow-y-auto space-y-2 text-slate-300 shadow-inner leading-relaxed">
                 {consoleLogs.length === 0 ? (
@@ -2672,8 +2721,20 @@ export default function App() {
             <div className="p-5 rounded-2xl glassmorphism flex flex-col space-y-4 overflow-hidden">
               <div className="flex items-center justify-between">
                 <h2 className="font-display font-semibold text-sm">Executive Intelligence Report</h2>
-                {finalReport && (
-                  <div className="flex items-center space-x-2">
+                <div className="flex items-center space-x-2">
+                  <button
+                    onClick={() => {
+                      setFinalReport(null);
+                      setMitigationActions([]);
+                      setMetrics(null);
+                    }}
+                    disabled={!finalReport}
+                    className="px-2.5 py-1 text-[10px] font-semibold text-slate-400 hover:text-slate-200 disabled:opacity-30 bg-slate-800/40 hover:bg-slate-800/80 rounded-md border border-slate-700/50 transition-all active:scale-[0.98]"
+                  >
+                    Clear
+                  </button>
+                  {finalReport && (
+                    <div className="flex items-center space-x-2">
                     {/* Copy Markdown Button */}
                     <button 
                       onClick={() => {
@@ -2835,6 +2896,7 @@ export default function App() {
                   </div>
                 )}
               </div>
+            </div>
               
               {!finalReport ? (
                 <div className="flex-1 flex flex-col items-center justify-center border border-dashed border-slate-800 rounded-xl p-6 text-center">
@@ -2942,10 +3004,24 @@ export default function App() {
           {/* Left Column: Simulator Controls */}
           <div className="col-span-4 flex flex-col space-y-6 overflow-y-auto pr-1">
             <div className="p-5 rounded-2xl glassmorphism space-y-4">
-              <h2 className="font-display font-semibold text-sm flex items-center space-x-2">
-                <span className="text-indigo-400 text-lg">⚡</span>
-                <span>Live Log Simulator Control</span>
-              </h2>
+              <div className="flex items-center justify-between">
+                <h2 className="font-display font-semibold text-sm flex items-center space-x-2">
+                  <span className="text-indigo-400 text-lg">⚡</span>
+                  <span>Live Log Simulator Control</span>
+                </h2>
+                <button
+                  onClick={() => {
+                    setSimScenario("Normal System Activity");
+                    setSimFormat("Syslog");
+                    setSimRate(5);
+                    setSimCustomIp("");
+                    setSimCustomUser("");
+                  }}
+                  className="px-2.5 py-1 text-[10px] font-semibold text-slate-400 hover:text-slate-200 bg-slate-800/40 hover:bg-slate-800/80 rounded-md border border-slate-700/50 transition-all active:scale-[0.98]"
+                >
+                  Clear
+                </button>
+              </div>
               
               <div className="space-y-3">
                 <div>
@@ -3094,11 +3170,23 @@ export default function App() {
               <div className="flex items-center justify-between">
                 <h3 className="font-display font-semibold text-sm">Real-time Simulated Stream Console</h3>
                 
-                {/* Export Dropdown */}
-                <div className="relative">
-                  <button 
-                    onClick={() => setSimExportOpen(!simExportOpen)}
+                <div className="flex items-center space-x-2">
+                  <button
+                    onClick={() => {
+                      setSimLogs("");
+                      setSimulatedCount(0);
+                      setSimulatedAnomalies(0);
+                    }}
                     disabled={!simLogs}
+                    className="px-2.5 py-1 text-[10px] font-semibold text-slate-400 hover:text-slate-200 disabled:opacity-30 bg-slate-800/40 hover:bg-slate-800/80 rounded-md border border-slate-700/50 transition-all active:scale-[0.98]"
+                  >
+                    Clear
+                  </button>
+                  {/* Export Dropdown */}
+                  <div className="relative">
+                    <button 
+                      onClick={() => setSimExportOpen(!simExportOpen)}
+                      disabled={!simLogs}
                     className="flex items-center space-x-1 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl border border-slate-700 text-xs font-semibold select-none shadow-sm disabled:opacity-50 transition-all"
                   >
                     <span>📥 Export Logs</span>
@@ -3144,6 +3232,7 @@ export default function App() {
                   )}
                 </div>
               </div>
+            </div>
 
               <textarea 
                 value={simLogs}

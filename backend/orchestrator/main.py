@@ -32,7 +32,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-DB_PATH = "sentinel_forge.db"
+DB_PATH = get_config("DB_PATH", "sentinel_forge.db")
+# If running inside docker container (PYTHONPATH=/app) and mapped volume path exists, use it
+if os.path.exists("/app/orchestrator/db") or os.environ.get("PYTHONPATH") == "/app":
+    os.makedirs("/app/orchestrator/db", exist_ok=True)
+    DB_PATH = "/app/orchestrator/db/sentinel_forge.db"
 
 # PostgreSQL Configuration variables
 AUTH_DB_TYPE = get_config("AUTH_DB_TYPE", "sqlite")
@@ -73,6 +77,25 @@ def init_db():
     conn.close()
 
 def init_auth_db():
+    # Always initialize SQLite users table first so the local backup is ready
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT UNIQUE NOT NULL,
+                email TEXT UNIQUE NOT NULL,
+                password_hash TEXT NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.commit()
+        conn.close()
+        logger.info("SQLite auth backup database initialized.")
+    except Exception as e:
+        logger.error(f"Failed to initialize SQLite auth database: {e}")
+
     if AUTH_DB_TYPE == "postgresql" or PG_HOST:
         logger.info(f"Attempting connection to PostgreSQL auth database: {PG_HOST}:{PG_PORT}/{PG_DB}")
         try:
@@ -83,7 +106,8 @@ def init_auth_db():
                 database=PG_DB,
                 user=PG_USER,
                 password=PG_PASSWORD,
-                sslmode=PG_SSLMODE
+                sslmode=PG_SSLMODE,
+                connect_timeout=3
             )
             c = conn.cursor()
             c.execute("""
@@ -96,26 +120,30 @@ def init_auth_db():
                 );
             """)
             conn.commit()
+            
+            # Fetch all users from PostgreSQL to update local SQLite backup
+            c.execute("SELECT username, email, password_hash FROM users")
+            pg_users = c.fetchall()
             conn.close()
-            logger.info("PostgreSQL auth database initialized successfully.")
+            
+            if pg_users:
+                logger.info(f"Syncing {len(pg_users)} users from PostgreSQL to SQLite backup...")
+                sqlite_conn = sqlite3.connect(DB_PATH)
+                sc = sqlite_conn.cursor()
+                for u in pg_users:
+                    sc.execute(
+                        "INSERT OR REPLACE INTO users (username, email, password_hash) VALUES (?, ?, ?)",
+                        (u[0], u[1], u[2])
+                    )
+                sqlite_conn.commit()
+                sqlite_conn.close()
+                logger.info("Sync completed successfully.")
+                
+            logger.info("PostgreSQL auth database initialized and synced successfully.")
             return "postgresql"
         except Exception as e:
             logger.warning(f"PostgreSQL auth connection failed: {e}. Falling back to SQLite for auth.")
     
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT UNIQUE NOT NULL,
-            email TEXT UNIQUE NOT NULL,
-            password_hash TEXT NOT NULL,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-    conn.commit()
-    conn.close()
-    logger.info("SQLite auth database initialized successfully.")
     return "sqlite"
 
 # Initialize databases immediately
@@ -140,7 +168,8 @@ def verify_password(password: str, hashed: str) -> bool:
 
 # Database User CRUD
 def db_create_user(username: str, email: str, password_hash: str) -> bool:
-    if active_auth_db == "postgresql":
+    # Try PostgreSQL first if configured
+    if AUTH_DB_TYPE == "postgresql" or PG_HOST:
         try:
             import psycopg2
             conn = psycopg2.connect(
@@ -149,7 +178,8 @@ def db_create_user(username: str, email: str, password_hash: str) -> bool:
                 database=PG_DB,
                 user=PG_USER,
                 password=PG_PASSWORD,
-                sslmode=PG_SSLMODE
+                sslmode=PG_SSLMODE,
+                connect_timeout=3
             )
             c = conn.cursor()
             c.execute(
@@ -158,29 +188,49 @@ def db_create_user(username: str, email: str, password_hash: str) -> bool:
             )
             conn.commit()
             conn.close()
+            
+            # Successful write to PostgreSQL -> Mirror/Backup to SQLite
+            try:
+                sqlite_conn = sqlite3.connect(DB_PATH)
+                sc = sqlite_conn.cursor()
+                sc.execute(
+                    "INSERT OR REPLACE INTO users (username, email, password_hash) VALUES (?, ?, ?)",
+                    (username, email, password_hash)
+                )
+                sqlite_conn.commit()
+                sqlite_conn.close()
+                logger.info(f"Successfully mirrored user {username} to SQLite backup.")
+            except Exception as sqle:
+                logger.error(f"Failed to backup user {username} to SQLite: {sqle}")
+                
             return True
         except Exception as e:
-            logger.error(f"PostgreSQL create user error: {e}")
-            raise HTTPException(status_code=500, detail=f"Database write failure: {e}")
-    else:
-        try:
-            conn = sqlite3.connect(DB_PATH)
-            c = conn.cursor()
-            c.execute(
-                "INSERT INTO users (username, email, password_hash) VALUES (?, ?, ?)",
-                (username, email, password_hash)
-            )
-            conn.commit()
-            conn.close()
-            return True
-        except sqlite3.IntegrityError:
-            raise HTTPException(status_code=400, detail="Username or email already exists.")
-        except Exception as e:
-            logger.error(f"SQLite create user error: {e}")
-            raise HTTPException(status_code=500, detail=f"Database write failure: {e}")
+            # Check for PostgreSQL duplicate key integrity constraints
+            import psycopg2
+            if isinstance(e, psycopg2.IntegrityError) or "already exists" in str(e).lower():
+                raise HTTPException(status_code=400, detail="Username or email already exists.")
+            logger.warning(f"PostgreSQL create user failed: {e}. Trying SQLite fallback.")
+
+    # SQLite fallback/primary path
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute(
+            "INSERT INTO users (username, email, password_hash) VALUES (?, ?, ?)",
+            (username, email, password_hash)
+        )
+        conn.commit()
+        conn.close()
+        return True
+    except sqlite3.IntegrityError:
+        raise HTTPException(status_code=400, detail="Username or email already exists.")
+    except Exception as e:
+        logger.error(f"SQLite create user error: {e}")
+        raise HTTPException(status_code=500, detail=f"Database write failure: {e}")
 
 def db_get_user(username: str) -> Optional[Dict[str, Any]]:
-    if active_auth_db == "postgresql":
+    # Try PostgreSQL first if configured
+    if AUTH_DB_TYPE == "postgresql" or PG_HOST:
         try:
             import psycopg2
             conn = psycopg2.connect(
@@ -189,7 +239,8 @@ def db_get_user(username: str) -> Optional[Dict[str, Any]]:
                 database=PG_DB,
                 user=PG_USER,
                 password=PG_PASSWORD,
-                sslmode=PG_SSLMODE
+                sslmode=PG_SSLMODE,
+                connect_timeout=3
             )
             c = conn.cursor()
             c.execute("SELECT username, email, password_hash FROM users WHERE username = %s", (username,))
@@ -199,21 +250,21 @@ def db_get_user(username: str) -> Optional[Dict[str, Any]]:
                 return {"username": row[0], "email": row[1], "password_hash": row[2]}
             return None
         except Exception as e:
-            logger.error(f"PostgreSQL get user error: {e}")
-            return None
-    else:
-        try:
-            conn = sqlite3.connect(DB_PATH)
-            c = conn.cursor()
-            c.execute("SELECT username, email, password_hash FROM users WHERE username = ?", (username,))
-            row = c.fetchone()
-            conn.close()
-            if row:
-                return {"username": row[0], "email": row[1], "password_hash": row[2]}
-            return None
-        except Exception as e:
-            logger.error(f"SQLite get user error: {e}")
-            return None
+            logger.warning(f"PostgreSQL get user failed: {e}. Trying SQLite fallback.")
+
+    # SQLite fallback
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute("SELECT username, email, password_hash FROM users WHERE username = ?", (username,))
+        row = c.fetchone()
+        conn.close()
+        if row:
+            return {"username": row[0], "email": row[1], "password_hash": row[2]}
+        return None
+    except Exception as e:
+        logger.error(f"SQLite get user error: {e}")
+        return None
 
 # Auth Schemas
 class SignupRequest(BaseModel):
