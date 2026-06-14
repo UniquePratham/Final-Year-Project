@@ -2714,110 +2714,165 @@ export default function App() {
       )}
 
       {/* Agent Inspector Modal */}
-      {activeInspectorAgent && (
-        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="w-full max-w-4xl bg-slate-900 border border-slate-800 rounded-3xl overflow-hidden shadow-2xl flex flex-col max-h-[85vh] relative animate-fade-in">
-            {/* Header */}
-            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800/80 bg-slate-950/40">
-              <div className="flex items-center space-x-3">
-                <div className="p-2 rounded-xl bg-blue-500/10 text-blue-400">
-                  {activeInspectorAgent === 'intent' && <Icons.Terminal />}
-                  {activeInspectorAgent === 'data' && <Icons.Server />}
-                  {activeInspectorAgent === 'analysis' && <Icons.Cpu />}
-                  {activeInspectorAgent === 'response' && <Icons.ShieldAlert />}
-                  {activeInspectorAgent === 'report' && <Icons.CheckCircle />}
+      {activeInspectorAgent && (() => {
+        const theme = {
+          intent: {
+            textColor: 'text-blue-400',
+            borderColor: 'border-blue-500/25',
+            glowShadow: 'shadow-[0_0_40px_rgba(59,130,246,0.15)]',
+            bgGlow: 'bg-blue-950/20',
+            iconBg: 'bg-blue-500/10',
+            iconColor: 'text-blue-400'
+          },
+          data: {
+            textColor: 'text-purple-400',
+            borderColor: 'border-purple-500/25',
+            glowShadow: 'shadow-[0_0_40px_rgba(168,85,247,0.15)]',
+            bgGlow: 'bg-purple-950/20',
+            iconBg: 'bg-purple-500/10',
+            iconColor: 'text-purple-400'
+          },
+          analysis: {
+            textColor: 'text-amber-400',
+            borderColor: 'border-amber-500/25',
+            glowShadow: 'shadow-[0_0_40px_rgba(245,158,11,0.15)]',
+            bgGlow: 'bg-amber-950/20',
+            iconBg: 'bg-amber-500/10',
+            iconColor: 'text-amber-400'
+          },
+          response: {
+            textColor: 'text-rose-400',
+            borderColor: 'border-rose-500/25',
+            glowShadow: 'shadow-[0_0_40px_rgba(244,63,94,0.15)]',
+            bgGlow: 'bg-rose-950/20',
+            iconBg: 'bg-rose-500/10',
+            iconColor: 'text-rose-400'
+          },
+          report: {
+            textColor: 'text-emerald-400',
+            borderColor: 'border-emerald-500/25',
+            glowShadow: 'shadow-[0_0_40px_rgba(16,185,129,0.15)]',
+            bgGlow: 'bg-emerald-950/20',
+            iconBg: 'bg-emerald-500/10',
+            iconColor: 'text-emerald-400'
+          }
+        }[activeInspectorAgent] || {
+          textColor: 'text-blue-400',
+          borderColor: 'border-slate-800',
+          glowShadow: 'shadow-2xl',
+          bgGlow: 'bg-slate-950/40',
+          iconBg: 'bg-blue-500/10',
+          iconColor: 'text-blue-400'
+        };
+
+        const details = agentStepDetails[activeInspectorAgent];
+        const status = details?.status || 'IDLE';
+        const duration = details?.duration_ms;
+
+        return (
+          <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <div className={`w-full max-w-4xl bg-slate-900/95 border ${theme.borderColor} rounded-3xl overflow-hidden ${theme.glowShadow} flex flex-col max-h-[85vh] relative animate-fade-in backdrop-blur-xl`}>
+              {/* Header */}
+              <div className="flex items-center justify-between px-6 py-4.5 border-b border-slate-800/80 bg-slate-950/60">
+                <div className="flex items-center space-x-3.5">
+                  <div className={`p-2.5 rounded-xl ${theme.iconBg} ${theme.iconColor} shadow-inner`}>
+                    {activeInspectorAgent === 'intent' && <Icons.Terminal />}
+                    {activeInspectorAgent === 'data' && <Icons.Server />}
+                    {activeInspectorAgent === 'analysis' && <Icons.Cpu />}
+                    {activeInspectorAgent === 'response' && <Icons.ShieldAlert />}
+                    {activeInspectorAgent === 'report' && <Icons.CheckCircle />}
+                  </div>
+                  <div>
+                    <h3 className="font-display font-bold text-sm text-white capitalize">{activeInspectorAgent} Agent Workspace Inspector</h3>
+                    <span className="text-[10px] text-slate-500 uppercase font-semibold block tracking-wider mt-0.5">Active Agent Diagnostic Console</span>
+                  </div>
                 </div>
-                <div>
-                  <h3 className="font-display font-bold text-sm text-white capitalize">{activeInspectorAgent} Agent Workspace Inspector</h3>
-                  <span className="text-[10px] text-slate-500 uppercase font-semibold block">Active Agent Diagnostic Console</span>
+                
+                <div className="flex items-center space-x-4">
+                  {/* Status Badge */}
+                  <div className="flex items-center space-x-2">
+                    <span className={`text-[9px] px-2.5 py-1 rounded-full font-mono font-bold uppercase tracking-wider ${
+                      status === 'COMPLETED' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 shadow-[0_0_10px_rgba(16,185,129,0.15)]' :
+                      status === 'RUNNING' ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20 animate-pulse shadow-[0_0_10px_rgba(59,130,246,0.15)]' :
+                      status === 'FAILED' ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20 font-bold shadow-[0_0_10px_rgba(244,63,94,0.15)]' :
+                      'bg-slate-800/60 text-slate-400 border border-slate-700/50'
+                    }`}>
+                      {status}
+                    </span>
+                    {duration !== undefined && duration !== null && (
+                      <span className="text-[10px] text-slate-500 font-mono">({duration}ms)</span>
+                    )}
+                  </div>
+                  
+                  {/* Close Button */}
+                  <button 
+                    onClick={() => setActiveInspectorAgent(null)}
+                    className="p-1.5 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 hover:shadow-inner transition-all duration-200 active:scale-95"
+                  >
+                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
                 </div>
               </div>
-              
-              <div className="flex items-center space-x-3">
-                {/* Status Badge */}
-                {(() => {
-                  const details = agentStepDetails[activeInspectorAgent];
-                  const status = details?.status || 'IDLE';
-                  const duration = details?.duration_ms;
-                  return (
-                    <div className="flex items-center space-x-2">
-                      <span className={`text-[9px] px-2 py-0.5 rounded-full font-mono font-bold uppercase ${
-                        status === 'COMPLETED' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' :
-                        status === 'RUNNING' ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20 animate-pulse' :
-                        status === 'FAILED' ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20 font-bold' :
-                        'bg-slate-800 text-slate-500'
-                      }`}>
-                        {status}
-                      </span>
-                      {duration !== undefined && duration !== null && (
-                        <span className="text-[10px] text-slate-500 font-mono">({duration}ms)</span>
+
+              {/* Modal Content */}
+              <div className="flex-1 overflow-y-auto p-6 space-y-6">
+                {/* Agent Overview and Logic Description */}
+                <div className={`p-5 rounded-2xl ${theme.bgGlow} border ${theme.borderColor} backdrop-blur-sm transition-all duration-300`}>
+                  <h4 className={`font-semibold text-xs font-display mb-1.5 uppercase tracking-wider ${theme.textColor}`}>Agent Purpose &amp; Operational Logic</h4>
+                  <p className="text-xs text-slate-400 leading-relaxed font-sans">
+                    {activeInspectorAgent === 'intent' && "Identifies the user's analytical query request category (Security, Performance, Availability, Compliance, or Usage) and extracts search constraints (target users, IPs, time windows, and threshold metrics)."}
+                    {activeInspectorAgent === 'data' && "Ingests raw log lines, detects format structures, normalizes standard attributes (timestamp, severity level, service, source IP, message, user), filters logs based on intent criteria, and computes aggregate metrics."}
+                    {activeInspectorAgent === 'analysis' && "Runs statistical analysis over the normalized logs and metrics. Scans for anomalous frequencies (brute force attacks, volume spikes, service restarts) and generates severity, confidence score, and findings."}
+                    {activeInspectorAgent === 'response' && "Translates the analysis findings and anomalies into tactical playbooks. Generates automated OS commands (e.g., firewall block rules, system service restarts, process socket terminations) to mitigate threat vectors."}
+                    {activeInspectorAgent === 'report' && "Aggregates raw log metrics, analysis findings, and response mitigation playbooks into a premium, detailed intelligence report containing high-fidelity markdown summaries."}
+                  </p>
+                </div>
+
+                {/* Inspector Columns: Input vs Output */}
+                <div className="grid grid-cols-2 gap-6">
+                  {/* Input Payload Panel */}
+                  <div className="flex flex-col space-y-2.5">
+                    <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Input Parameters</span>
+                    <div className={`flex bg-slate-950/80 border border-slate-900 rounded-xl p-4 font-mono text-[11px] text-slate-300 overflow-y-auto max-h-[350px] shadow-inner min-h-[160px] ${!details?.input ? 'items-center justify-center text-center' : 'items-start justify-start'}`}>
+                      {details?.input ? (
+                        <pre className="whitespace-pre-wrap leading-relaxed w-full text-left">{JSON.stringify(details.input, null, 2)}</pre>
+                      ) : (
+                        <div className="flex flex-col items-center justify-center space-y-2 text-slate-600 p-6 font-sans">
+                          <span className="text-2xl">📥</span>
+                          <span className="text-xs tracking-wide">No parameters ingested yet.</span>
+                        </div>
                       )}
                     </div>
-                  );
-                })()}
-                
-                {/* Close Button */}
-                <button 
-                  onClick={() => setActiveInspectorAgent(null)}
-                  className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
-                >
-                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                  </svg>
-                </button>
-              </div>
-            </div>
-
-            {/* Modal Content */}
-            <div className="flex-1 overflow-y-auto p-6 space-y-6">
-              {/* Agent Overview and Logic Description */}
-              <div className="p-4.5 rounded-2xl bg-slate-950/40 border border-slate-800/80">
-                <h4 className="font-semibold text-slate-200 text-xs font-display mb-1.5 uppercase tracking-wider text-blue-400">Agent Purpose & Operational Logic</h4>
-                <p className="text-xs text-slate-400 leading-relaxed font-sans">
-                  {activeInspectorAgent === 'intent' && "Identifies the user's analytical query request category (Security, Performance, Availability, Compliance, or Usage) and extracts search constraints (target users, IPs, time windows, and threshold metrics)."}
-                  {activeInspectorAgent === 'data' && "Ingests raw log lines, detects format structures, normalizes standard attributes (timestamp, severity level, service, source IP, message, user), filters logs based on intent criteria, and computes aggregate metrics."}
-                  {activeInspectorAgent === 'analysis' && "Runs statistical analysis over the normalized logs and metrics. Scans for anomalous frequencies (brute force attacks, volume spikes, service restarts) and generates severity, confidence score, and findings."}
-                  {activeInspectorAgent === 'response' && "Translates the analysis findings and anomalies into tactical playbooks. Generates automated OS commands (e.g., firewall block rules, system service restarts, process socket terminations) to mitigate threat vectors."}
-                  {activeInspectorAgent === 'report' && "Aggregates raw log metrics, analysis findings, and response mitigation playbooks into a premium, detailed intelligence report containing high-fidelity markdown summaries."}
-                </p>
-              </div>
-
-              {/* Inspector Columns: Input vs Output */}
-              <div className="grid grid-cols-2 gap-6">
-                {/* Input Payload Panel */}
-                <div className="flex flex-col space-y-2">
-                  <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Input Parameters</span>
-                  <div className="flex-1 bg-slate-950/80 border border-slate-900 rounded-xl p-4 font-mono text-[11px] text-slate-300 overflow-y-auto max-h-[350px] shadow-inner">
-                    {agentStepDetails[activeInspectorAgent]?.input ? (
-                      <pre className="whitespace-pre-wrap leading-relaxed">{JSON.stringify(agentStepDetails[activeInspectorAgent].input, null, 2)}</pre>
-                    ) : (
-                      <span className="text-slate-600 italic">No input details recorded. Step may not have run yet.</span>
-                    )}
                   </div>
-                </div>
 
-                {/* Output Response Panel */}
-                <div className="flex flex-col space-y-2">
-                  <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Parsed Output Response</span>
-                  <div className="flex-1 bg-slate-950/80 border border-slate-900 rounded-xl p-4 font-mono text-[11px] text-emerald-400 overflow-y-auto max-h-[350px] shadow-inner">
-                    {agentStepDetails[activeInspectorAgent]?.output ? (
-                      <pre className="whitespace-pre-wrap leading-relaxed">{JSON.stringify(agentStepDetails[activeInspectorAgent].output, null, 2)}</pre>
-                    ) : (
-                      <span className="text-slate-600 italic">No output payload available. Step has not finished executing.</span>
-                    )}
+                  {/* Output Response Panel */}
+                  <div className="flex flex-col space-y-2.5">
+                    <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Parsed Output Response</span>
+                    <div className={`flex bg-slate-950/80 border border-slate-900 rounded-xl p-4 font-mono text-[11px] text-slate-300 overflow-y-auto max-h-[350px] shadow-inner min-h-[160px] ${!details?.output ? 'items-center justify-center text-center' : 'items-start justify-start'}`}>
+                      {details?.output ? (
+                        <pre className="whitespace-pre-wrap leading-relaxed w-full text-left text-emerald-400">{JSON.stringify(details.output, null, 2)}</pre>
+                      ) : (
+                        <div className="flex flex-col items-center justify-center space-y-2 text-slate-600 p-6 font-sans">
+                          <span className="text-2xl">📤</span>
+                          <span className="text-xs tracking-wide">No response output compiled yet.</span>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
               </div>
-            </div>
 
-            {/* Footer console note */}
-            <div className="px-6 py-3 border-t border-slate-800/80 bg-slate-950/40 text-[10px] text-slate-500 flex justify-between font-mono">
-              <span>Host: {apiUrl}</span>
-              <span>Communication Protocol: JSON over REST HTTP</span>
+              {/* Footer console note */}
+              <div className="px-6 py-3.5 border-t border-slate-800/80 bg-slate-950/60 text-[10px] text-slate-500 flex justify-between font-mono items-center">
+                <span className="truncate pr-4 text-left">Host: <span className="text-slate-400 font-bold">{apiUrl}</span></span>
+                <span className="shrink-0 text-right">Communication: <span className="text-slate-400 font-bold">JSON / REST HTTP</span></span>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Hidden printable PDF content (Cyberpunk Mockup Style) */}
       {finalReport && (
