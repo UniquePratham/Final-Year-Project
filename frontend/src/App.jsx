@@ -1844,10 +1844,65 @@ export default function App() {
     }
   };
 
+  const renderMobileOverlay = () => {
+    return (
+      <div className="fixed inset-0 z-[9999] flex flex-col items-center justify-center bg-slate-950 p-6 text-center lg:hidden overflow-y-auto font-sans select-none">
+        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-blue-950/20 via-slate-950 to-slate-950 z-0"></div>
+        <div className="w-full max-w-sm p-8 rounded-3xl glassmorphism border border-slate-800/80 flex flex-col items-center shadow-2xl relative overflow-hidden backdrop-blur-2xl z-10">
+          <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-blue-500 via-indigo-500 to-emerald-500"></div>
+          
+          <img src="logo.png" className="w-16 h-16 object-contain rounded-2xl mb-4 border border-slate-800 shadow-[0_0_15px_rgba(59,130,246,0.2)] animate-pulse" alt="Logo" />
+          
+          <div className="text-xs bg-rose-500/10 border border-rose-500/20 text-rose-400 px-3 py-1.5 rounded-full font-semibold uppercase tracking-widest mb-4">
+            Desktop Access Required
+          </div>
+          
+          <h1 className="font-display font-black text-2xl tracking-wide text-white mb-2 uppercase">SENTINEL FORGE</h1>
+          <p className="text-xs text-slate-400 mb-6 max-w-xs leading-relaxed">
+            Sentinel Forge is an advanced threat analysis workstation optimized for security analysts. To preserve visual telemetry interfaces, mobile layouts are disabled.
+          </p>
+
+          <div className="w-full text-left space-y-4 bg-slate-950/50 border border-slate-900 rounded-2xl p-4.5">
+            <h3 className="text-[10px] font-bold text-slate-300 uppercase tracking-widest mb-2 flex items-center">
+              <svg className="w-3.5 h-3.5 mr-1.5 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              Quick Unlock Guide
+            </h3>
+            
+            <div className="space-y-3.5 text-xs text-slate-400 font-medium">
+              <div className="flex items-start space-x-2">
+                <span className="flex items-center justify-center w-5 h-5 rounded-lg bg-blue-500/10 border border-blue-500/20 text-blue-400 text-[10px] font-bold shrink-0 mt-0.5">1</span>
+                <div>
+                  <span className="text-slate-200 font-semibold block">Enable Desktop Mode</span>
+                  <p className="text-[11px] text-slate-400 mt-0.5 leading-relaxed">
+                    Open your mobile browser's menu and select <strong className="text-slate-300 font-semibold">"Desktop site"</strong> (Chrome) or <strong className="text-slate-300 font-semibold">"Request Desktop Website"</strong> (Safari).
+                  </p>
+                </div>
+              </div>
+              
+              <div className="flex items-start space-x-2">
+                <span className="flex items-center justify-center w-5 h-5 rounded-lg bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 text-[10px] font-bold shrink-0 mt-0.5">2</span>
+                <div>
+                  <span className="text-slate-200 font-semibold block">Use a Workstation</span>
+                  <p className="text-[11px] text-slate-400 mt-0.5 leading-relaxed">
+                    Log in from any desktop or laptop computer to view real-time log ingestion feeds and pipeline visualizations.
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   // Auth panel view
   if (!isLoggedIn) {
     return (
-      <div className="flex items-center justify-center min-h-screen bg-slate-950 font-sans text-slate-100 p-4">
+      <>
+        {renderMobileOverlay()}
+        <div className="flex items-center justify-center min-h-screen bg-slate-950 font-sans text-slate-100 p-4">
         <div className="w-full max-w-md p-8 sm:p-10 rounded-3xl glassmorphism flex flex-col items-center shadow-2xl relative overflow-hidden backdrop-blur-2xl">
           <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-blue-500 via-indigo-500 to-emerald-500"></div>
           
@@ -1916,12 +1971,15 @@ export default function App() {
           </div>
         </div>
       </div>
+      </>
     );
   }
  
   // Dashboard View
   return (
-    <div className="flex flex-col h-full font-sans bg-slate-950 text-slate-100">
+    <>
+      {renderMobileOverlay()}
+      <div className="flex flex-col h-full font-sans bg-slate-950 text-slate-100">
       
       {/* Header bar */}
       <header className="flex items-center justify-between px-6 py-4 border-b border-slate-800 bg-slate-900/40 backdrop-blur-xl relative z-30">
@@ -3826,6 +3884,7 @@ export default function App() {
       </div>
       )}
 
-    </div>
+      </div>
+    </>
   );
 }
