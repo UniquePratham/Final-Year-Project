@@ -2722,17 +2722,6 @@ export default function App() {
               <div className="flex items-center justify-between">
                 <h2 className="font-display font-semibold text-sm">Executive Intelligence Report</h2>
                 <div className="flex items-center space-x-2">
-                  <button
-                    onClick={() => {
-                      setFinalReport(null);
-                      setMitigationActions([]);
-                      setMetrics(null);
-                    }}
-                    disabled={!finalReport}
-                    className="px-2.5 py-1 text-[10px] font-semibold text-slate-400 hover:text-slate-200 disabled:opacity-30 bg-slate-800/40 hover:bg-slate-800/80 rounded-md border border-slate-700/50 transition-all active:scale-[0.98]"
-                  >
-                    Clear
-                  </button>
                   {finalReport && (
                     <div className="flex items-center space-x-2">
                     {/* Copy Markdown Button */}
@@ -2895,8 +2884,20 @@ export default function App() {
                     </div>
                   </div>
                 )}
+                  <button
+                    onClick={() => {
+                      setFinalReport(null);
+                      setMitigationActions([]);
+                      setMetrics(null);
+                    }}
+                    disabled={!finalReport}
+                    className="flex items-center space-x-1 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 hover:text-rose-400 text-slate-300 disabled:opacity-30 rounded-xl border border-slate-700 text-xs font-semibold select-none shadow-sm transition-all active:scale-[0.98]"
+                    title="Clear report contents"
+                  >
+                    <span>🧹 Clear</span>
+                  </button>
+                </div>
               </div>
-            </div>
               
               {!finalReport ? (
                 <div className="flex-1 flex flex-col items-center justify-center border border-dashed border-slate-800 rounded-xl p-6 text-center">
@@ -3178,9 +3179,10 @@ export default function App() {
                       setSimulatedAnomalies(0);
                     }}
                     disabled={!simLogs}
-                    className="px-2.5 py-1 text-[10px] font-semibold text-slate-400 hover:text-slate-200 disabled:opacity-30 bg-slate-800/40 hover:bg-slate-800/80 rounded-md border border-slate-700/50 transition-all active:scale-[0.98]"
+                    className="flex items-center space-x-1 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 hover:text-rose-400 text-slate-300 disabled:opacity-30 rounded-xl border border-slate-700 text-xs font-semibold select-none shadow-sm transition-all active:scale-[0.98]"
+                    title="Clear simulated logs console"
                   >
-                    Clear
+                    <span>🧹 Clear</span>
                   </button>
                   {/* Export Dropdown */}
                   <div className="relative">
