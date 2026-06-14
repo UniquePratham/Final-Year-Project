@@ -580,6 +580,17 @@ def apply_filters(logs: List[NormalizedLog], intent: IntentObject) -> List[Norma
     target_resource = clean_val(entities.get("resource"))
     time_window = clean_val(conditions.get("time_window"))
 
+    THREAT_AND_SCENARIO_KEYWORDS = {
+        "ddos", "dos", "brute force", "bruteforce", "malware", "intrusion", 
+        "attack", "traffic spike", "rate limit", "denial of service"
+    }
+    
+    is_threat_scenario = False
+    if target_resource:
+        tr_lower = target_resource.lower()
+        if any(kw in tr_lower for kw in THREAT_AND_SCENARIO_KEYWORDS):
+            is_threat_scenario = True
+
     cutoff_time = None
     if time_window:
         match = re.match(r'(\d+)([smhd])', str(time_window))
@@ -600,8 +611,9 @@ def apply_filters(logs: List[NormalizedLog], intent: IntentObject) -> List[Norma
             continue
         if target_user and log.user != target_user:
             continue
-        if target_resource and target_resource.lower() not in log.message.lower() and target_resource.lower() not in (log.service or "").lower():
-            continue
+        if target_resource and not is_threat_scenario:
+            if target_resource.lower() not in log.message.lower() and target_resource.lower() not in (log.service or "").lower():
+                continue
         filtered.append(log)
     return filtered
 

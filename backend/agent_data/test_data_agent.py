@@ -373,3 +373,35 @@ def test_process_data_json_array_dump():
     assert data["logs_normalized"][1]["source_ip"] == "91.200.12.33"
 
 
+def test_ddos_query_filtering_bypass():
+    intent_payload = {
+        "intent_class": "Security",
+        "entities": {
+            "ip_address": None,
+            "user": None,
+            "resource": "DDOS attack"
+        },
+        "conditions": {},
+        "raw_prompt": "Detect DDoS attacks"
+    }
+
+    nginx_raw = (
+        '192.168.1.50 - - [13/Jun/2026:22:47:09 +0000] "GET /api/v1/users HTTP/1.1" 200 452 "-" "Mozilla/5.0"\n'
+        '192.168.1.51 - - [13/Jun/2026:22:47:10 +0000] "POST /api/v1/auth HTTP/1.1" 200 128 "-" "Mozilla/5.0"\n'
+    )
+
+    payload = {
+        "intent": intent_payload,
+        "logs_raw": nginx_raw,
+        "log_format": "NGINX"
+    }
+
+    response = client.post("/process-data", json=payload)
+    assert response.status_code == 200
+    data = response.json()
+
+    assert len(data["logs_normalized"]) == 2
+    assert data["metrics"]["total_records"] == 2
+    assert data["metrics"]["filtered_records"] == 2
+
+

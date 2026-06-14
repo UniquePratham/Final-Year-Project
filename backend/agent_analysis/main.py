@@ -103,48 +103,99 @@ def run_rule_engine(intent: IntentObject, metrics: Dict[str, Any], logs: List[No
         else:
             threshold = 5
 
-        # Rule: brute-force threshold exceeded
-        if error_count >= threshold:
-            findings.append(
-                f"ALERT: {error_count} authentication failures detected (threshold: {threshold}). "
-                f"This exceeds the brute-force detection threshold."
-            )
-            severity = "HIGH"
-            confidence = 0.9
+        def set_severity(new_sev, new_conf):
+            nonlocal severity, confidence
+            if SEVERITY_RANK.get(new_sev, 0) > SEVERITY_RANK.get(severity, 0):
+                severity = new_sev
+                confidence = new_conf
+            elif SEVERITY_RANK.get(new_sev, 0) == SEVERITY_RANK.get(severity, 0):
+                confidence = max(confidence, new_conf)
 
-        # Rule: single IP concentration
-        if top_ips:
-            top_ip, top_count = top_ips[0] if isinstance(top_ips[0], (list, tuple)) else (top_ips[0], 1)
-            if isinstance(top_count, int) and top_count >= threshold:
+        # Rule: DDoS / DoS detection
+        is_ddos_query = False
+        if intent.raw_prompt:
+            p_lower = intent.raw_prompt.lower()
+            if any(kw in p_lower for kw in ("ddos", "dos", "denial of service", "traffic spike", "rate limit")):
+                is_ddos_query = True
+        if intent.entities and intent.entities.get("resource"):
+            r_lower = str(intent.entities.get("resource")).lower()
+            if any(kw in r_lower for kw in ("ddos", "dos", "denial of service", "traffic spike", "rate limit")):
+                is_ddos_query = True
+
+        if is_ddos_query:
+            ddos_ips = []
+            for ip_entry in top_ips:
+                if isinstance(ip_entry, (list, tuple)) and len(ip_entry) >= 2:
+                    ip, cnt = ip_entry[0], ip_entry[1]
+                    if isinstance(cnt, int) and cnt >= threshold:
+                        ddos_ips.append((ip, cnt))
+            
+            if ddos_ips:
+                if len(ddos_ips) >= 3:
+                    findings.append(
+                        f"ALERT: Distributed Denial of Service (DDoS) attack detected — {len(ddos_ips)} IPs generating high volume of requests (threshold: {threshold})."
+                    )
+                    for ip, cnt in ddos_ips:
+                        anomalies.append({
+                            "description": f"DDoS traffic source: {cnt} requests",
+                            "timestamp": None,
+                            "source_ip": str(ip),
+                            "severity": "CRITICAL"
+                        })
+                    set_severity("CRITICAL", 0.98)
+                else:
+                    top_ip, top_count = ddos_ips[0]
+                    findings.append(
+                        f"ALERT: Potential Denial of Service (DoS) attack from IP {top_ip} generating {top_count} requests (threshold: {threshold})."
+                    )
+                    anomalies.append({
+                        "description": f"DoS attack source: {top_count} requests",
+                        "timestamp": None,
+                        "source_ip": str(top_ip),
+                        "severity": "HIGH"
+                    })
+                    set_severity("HIGH", 0.95)
+        else:
+            # Rule: brute-force threshold exceeded
+            if error_count >= threshold:
                 findings.append(
-                    f"ALERT: IP {top_ip} generated {top_count} events — concentrated attack source."
+                    f"ALERT: {error_count} authentication failures detected (threshold: {threshold}). "
+                    f"This exceeds the brute-force detection threshold."
                 )
-                anomalies.append({
-                    "description": f"Concentrated attack from {top_ip}: {top_count} events",
-                    "timestamp": None,
-                    "source_ip": str(top_ip),
-                    "severity": "HIGH"
-                })
-                severity = "CRITICAL" if top_count >= threshold * 3 else "HIGH"
-                confidence = 0.95
+                set_severity("HIGH", 0.9)
 
-        # Rule: multiple IPs attacking (distributed brute-force)
-        attacking_ips = [(ip, cnt) for ip, cnt in top_ips if isinstance(cnt, int) and cnt >= max(threshold // 2, 2)]
-        if len(attacking_ips) >= 3:
-            findings.append(
-                f"ALERT: Distributed attack detected — {len(attacking_ips)} IPs each with {threshold // 2}+ failures."
-            )
-            severity = "CRITICAL"
-            confidence = 0.95
+            # Rule: single IP concentration
+            if top_ips:
+                top_ip, top_count = top_ips[0] if isinstance(top_ips[0], (list, tuple)) else (top_ips[0], 1)
+                if isinstance(top_count, int) and top_count >= threshold:
+                    findings.append(
+                        f"ALERT: IP {top_ip} generated {top_count} events — concentrated attack source."
+                    )
+                    anomalies.append({
+                        "description": f"Concentrated attack from {top_ip}: {top_count} events",
+                        "timestamp": None,
+                        "source_ip": str(top_ip),
+                        "severity": "HIGH"
+                    })
+                    target_sev = "CRITICAL" if top_count >= threshold * 3 else "HIGH"
+                    set_severity(target_sev, 0.95)
 
-        # Rule: targeted user accounts
-        if user_dist:
-            targeted_users = [u for u, c in user_dist.items() if c >= threshold]
-            if targeted_users:
+            # Rule: multiple IPs attacking (distributed brute-force)
+            attacking_ips = [(ip, cnt) for ip, cnt in top_ips if isinstance(cnt, int) and cnt >= max(threshold // 2, 2)]
+            if len(attacking_ips) >= 3:
                 findings.append(
-                    f"ALERT: Targeted accounts: {', '.join(targeted_users[:5])}. "
-                    f"Consider locking these accounts."
+                    f"ALERT: Distributed attack detected — {len(attacking_ips)} IPs each with {threshold // 2}+ failures."
                 )
+                set_severity("CRITICAL", 0.95)
+
+            # Rule: targeted user accounts
+            if user_dist:
+                targeted_users = [u for u, c in user_dist.items() if c >= threshold]
+                if targeted_users:
+                    findings.append(
+                        f"ALERT: Targeted accounts: {', '.join(targeted_users[:5])}. "
+                        f"Consider locking these accounts."
+                    )
 
     # --- Performance intent rules ---
     elif intent.intent_class == "Performance":
