@@ -24,15 +24,15 @@ graph TD
         Orchestrator -->|3. Heuristics + LLM| AnalysisAgent[Analysis Agent]
         AnalysisAgent -->|Anomalies, Trends, Severity| Orchestrator
         
-        Orchestrator -->|4. Generate Summary| ReportAgent[Report Agent]
-        ReportAgent -->|Markdown Report, Health Status| Orchestrator
-        
-        Orchestrator -->|5. Build Playbooks| ResponseAgent[Response Agent]
+        Orchestrator -->|4. Build Playbooks| ResponseAgent[Response Agent]
         ResponseAgent -->|Mitigation Actions & Commands| Orchestrator
+        
+        Orchestrator -->|5. Generate Summary| ReportAgent[Report Agent]
+        ReportAgent -->|Markdown Report, Health Status| Orchestrator
     end
 
     subgraph LLM & Storage Backend
-        IntentAgent & AnalysisAgent & ReportAgent & ResponseAgent -->|Generate| AIAdapter[AI Adapter]
+        IntentAgent & AnalysisAgent & ResponseAgent & ReportAgent -->|Generate| AIAdapter[AI Adapter]
         AIAdapter -->|Local Inference| Ollama[Ollama Server / sentinel-forge-qwen]
         
         Orchestrator -->|Audit Trail| SQLite[(SQLite Run History)]
@@ -60,13 +60,13 @@ graph TD
    * Runs a high-performance **deterministic rule engine** to immediately identify brute-force attacks, DDoS profiles, high error ratios, and malicious signatures.
    * Cascades to local LLM analysis for trend evaluation and semantic anomaly discovery, automatically skipping the LLM call if heuristics trigger high-confidence detections to ensure maximum speed.
 
-4. **Executive Reporting (Report Agent)**
-   * Synthesizes metrics and security findings into an executive-ready Markdown summary.
-   * Establishes a system health level (`Good`, `Warning`, `Bad`) mapped to analysis severity.
-
-5. **Automated Incident Mitigation (Response Agent)**
+4. **Automated Incident Mitigation (Response Agent)**
    * Translates anomalies into concrete, actionable operations: `Block IP` (e.g. iptables rules), `Restart Service`, `Adjust Firewall`, `Capacity Increase`, or `Send Notification`.
    * Automatically extracts IPs mentioned in unstructured text to compile firewall block lists.
+
+5. **Executive Reporting (Report Agent)**
+   * Synthesizes metrics, anomalies, and Response Agent playbooks into an executive-ready Markdown summary.
+   * Establishes a system health level (`Good`, `Warning`, `Bad`) mapped to analysis severity.
 
 ---
 
@@ -80,8 +80,8 @@ graph TD
 │   ├── agent_intent/              # Natural language prompt query classifier service
 │   ├── agent_data/                # Universal parser, normalizer, and aggregator
 │   ├── agent_analysis/            # Heuristics rule engine & LLM anomaly evaluator
-│   ├── agent_report/              # Executive Markdown summary compiler
 │   ├── agent_response/            # Incident playbook and firewall mitigation generator
+│   ├── agent_report/              # Executive Markdown summary compiler
 │   └── shared/                    # Shared types, custom AI adapter, and JSON extraction utils
 ├── frontend/                      # React SPA UI client
 │   ├── src/                       # Components, SSE logs subscriber, visualization dashboard
@@ -121,10 +121,39 @@ This builds and starts the following components:
 * **Agent Intent**: API exposed at `http://localhost:8001`.
 * **Agent Data**: API exposed at `http://localhost:8002`.
 * **Agent Analysis**: API exposed at `http://localhost:8003`.
-* **Agent Report**: API exposed at `http://localhost:8004`.
 * **Agent Response**: API exposed at `http://localhost:8005`.
+* **Agent Report**: API exposed at `http://localhost:8004`.
 
 *Note: The agents will communicate with Ollama running on the host system via their configured adapter endpoints.*
+
+---
+
+## 🖥️ Desktop Client Application (Electron)
+
+Sentinel Forge includes a cross-platform desktop wrapper application built using **Electron**, allowing the log intelligence console to run as a native desktop utility.
+
+### Build & Package Desktop Executable
+
+1. **Build the React Frontend** (if not already done):
+   ```bash
+   cd frontend
+   npm run build
+   ```
+
+2. **Package the Native Installer**:
+   From the desktop directory:
+   ```bash
+   cd ../desktop
+   npm install
+   npm run package
+   ```
+   This copies the compiled frontend bundle and packages a standalone executable (`.exe` for Windows) inside the `dist-app/` directory.
+
+3. **Running in Developer Mode**:
+   To load the application pointing to your Vite dev server:
+   ```bash
+   npm start
+   ```
 
 ---
 
@@ -186,4 +215,14 @@ The backend test suite verifies agent responses, JSON extractors, rule-engine tr
 ## 🛡️ Database & Auditing
 
 * **Run Audit Trail**: By default, the orchestrator logs pipeline status, payloads, and latency for every run to a local SQLite database (`sentinel_forge.db`).
-* **Authentication**: Supports standard login and registration flows. By default, the system initializes database schemas in SQLite, but automatically promotes user databases to **PostgreSQL** if `POSTGRES_HOST` environment variables are declared in `docker-compose.yml` or `.env`.
+* **Authentication Fallback Sync**: Supports standard login and registration flows. In production settings, authentication routes operate on PostgreSQL. To prevent user lockout during Postgres outages, registrations and hashes are mirrored in real-time to a local SQLite database backup (`sentinel_forge.db`), enabling automatic fallback auth reads.
+
+---
+
+## 🧹 Interactive UI Controls
+The React dashboard UI features modular panels with individual **🧹 Clear** control actions:
+* **Prompt Clear**: Resets input questions.
+* **Console Audit Clear**: Wipes live agent runtime console logs.
+* **File Ingest Clear**: Clears file uploads.
+* **Findings & Playbook Clear**: Resets markdown summaries and Response mitigation script panels.
+* **Simulator Console Clear**: Resets real-time simulation output buffers.
